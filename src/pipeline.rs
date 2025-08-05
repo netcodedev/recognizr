@@ -18,7 +18,7 @@ fn preprocess_image_topleft(
     img: &DynamicImage,
     target_height: u32,
     target_width: u32,
-) -> (RgbImage, f32) {
+) -> (RgbImage, u32, u32) {
     let img_h = img.height();
     let img_w = img.width();
 
@@ -35,7 +35,7 @@ fn preprocess_image_topleft(
     let mut canvas = RgbImage::from_pixel(target_width, target_height, image::Rgb([114, 114, 114]));
     imageops::overlay(&mut canvas, &resized_img, 0, 0);
 
-    (canvas, ratio)
+    (canvas, new_w, new_h)
 }
 
 /// Takes raw image bytes, runs the detector, and returns a clean list of faces and the resize ratio.
@@ -43,30 +43,26 @@ pub fn detect_faces(
     session: &mut Session,
     image_bytes: &[u8],
     params: &DebugParams,
-) -> Result<(Vec<DetectedFace>, f32), AppError> {
+) -> Result<(Vec<DetectedFace>, u32, u32), AppError> {
     let image = image::load_from_memory(image_bytes)?;
     
-    // 1. Preprocess the image using the letterbox method
-    let (processed_img, ratio) =
+    let (processed_img, new_w, new_h) =
         preprocess_image_topleft(&image, DETECTOR_TARGET_SHAPE.0, DETECTOR_TARGET_SHAPE.1);
 
-    // 2. Prepare the tensor (BGR order, normalized to [-1, 1])
     let mut input_tensor = Array::zeros((1, 3, DETECTOR_TARGET_SHAPE.0 as usize, DETECTOR_TARGET_SHAPE.1 as usize));
     for (x, y, pixel) in processed_img.enumerate_pixels() {
-        input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - 127.5) / 127.5; // Blue
-        input_tensor[[0, 1, y as usize, x as usize]] = (pixel[1] as f32 - 127.5) / 127.5; // Green
-        input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - 127.5) / 127.5; // Red
+        input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - 127.5) / 127.5;
+        input_tensor[[0, 1, y as usize, x as usize]] = (pixel[1] as f32 - 127.5) / 127.5;
+        input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - 127.5) / 127.5;
     }
 
-    // 3. Run Inference
     let inputs = inputs!["input.1" => Value::from_array(input_tensor)?]?;
     let outputs = session.run(inputs)?;
     
-    // 4. Extract tensors by name and prepare them for decoding
     let score_8 = outputs["448"].try_extract_tensor::<f32>()?;
     let bbox_8 = outputs["451"].try_extract_tensor::<f32>()?;
     let kps_8 = outputs["454"].try_extract_tensor::<f32>()?;
-    
+
     let score_16 = outputs["471"].try_extract_tensor::<f32>()?;
     let bbox_16 = outputs["474"].try_extract_tensor::<f32>()?;
     let kps_16 = outputs["477"].try_extract_tensor::<f32>()?;
@@ -81,14 +77,11 @@ pub fn detect_faces(
         (32, score_32, bbox_32, kps_32),
     ];
 
-    // 5. Decode proposals from the 640x640 space
     let proposals = decode_proposals(&all_outputs, DETECTOR_TARGET_SHAPE.1 as f32, DETECTOR_TARGET_SHAPE.0 as f32, params)?;
 
-    // 6. Apply Non-Maximum Suppression
     let final_faces = non_maximum_suppression(&proposals, NMS_THRESHOLD);
 
-    // 7. Return both the faces and the ratio for coordinate scaling
-    Ok((final_faces, ratio))
+    Ok((final_faces, new_w, new_h))
 }
 
 /// Decodes raw model output into candidate faces.
@@ -102,7 +95,6 @@ fn decode_proposals(
     let mut proposals = Vec::new();
 
     for (stride, scores_tuple, boxes, kps) in outputs {
-        // Manually reconstruct ArrayView from the shape and flat slice provided by ort v2.0.0-rc.1
         let scores = scores_tuple.slice(s![.., 0]);
 
         let feature_height = (img_height / *stride as f32).ceil() as usize;
@@ -124,7 +116,6 @@ fn decode_proposals(
                     let anchor_cx = (x as f32 + 0.5) * *stride as f32;
                     let anchor_cy = (y as f32 + 0.5) * *stride as f32;
 
-                    // Use linear decoding (no exp) to match the final Python script
                     let l = box_pred[0] * *stride as f32;
                     let t = box_pred[1] * *stride as f32;
                     let r = box_pred[2] * *stride as f32;

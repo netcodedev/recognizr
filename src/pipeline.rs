@@ -63,17 +63,17 @@ pub fn detect_faces(
     let outputs = session.run(inputs)?;
     
     // 4. Extract tensors by name and prepare them for decoding
-    let score_8 = outputs["score_8"].try_extract_tensor::<f32>()?;
-    let bbox_8 = outputs["bbox_8"].try_extract_tensor::<f32>()?;
-    let kps_8 = outputs["kps_8"].try_extract_tensor::<f32>()?;
+    let score_8 = outputs["448"].try_extract_tensor::<f32>()?;
+    let bbox_8 = outputs["451"].try_extract_tensor::<f32>()?;
+    let kps_8 = outputs["454"].try_extract_tensor::<f32>()?;
     
-    let score_16 = outputs["score_16"].try_extract_tensor::<f32>()?;
-    let bbox_16 = outputs["bbox_16"].try_extract_tensor::<f32>()?;
-    let kps_16 = outputs["kps_16"].try_extract_tensor::<f32>()?;
+    let score_16 = outputs["471"].try_extract_tensor::<f32>()?;
+    let bbox_16 = outputs["474"].try_extract_tensor::<f32>()?;
+    let kps_16 = outputs["477"].try_extract_tensor::<f32>()?;
 
-    let score_32 = outputs["score_32"].try_extract_tensor::<f32>()?;
-    let bbox_32 = outputs["bbox_32"].try_extract_tensor::<f32>()?;
-    let kps_32 = outputs["kps_32"].try_extract_tensor::<f32>()?;
+    let score_32 = outputs["494"].try_extract_tensor::<f32>()?;
+    let bbox_32 = outputs["497"].try_extract_tensor::<f32>()?;
+    let kps_32 = outputs["500"].try_extract_tensor::<f32>()?;
     
     let all_outputs = [
         (8, score_8, bbox_8, kps_8),
@@ -101,11 +101,9 @@ fn decode_proposals(
     let conf_threshold = params.threshold.unwrap_or(0.5);
     let mut proposals = Vec::new();
 
-    for (stride, scores_tuple, boxes_tuple, kps_tuple) in outputs {
+    for (stride, scores_tuple, boxes, kps) in outputs {
         // Manually reconstruct ArrayView from the shape and flat slice provided by ort v2.0.0-rc.1
-        let scores = scores_tuple.slice(s![0, .., 0]);
-        let boxes = boxes_tuple.slice(s![0, .., ..]);
-        let kps = kps_tuple.slice(s![0, .., ..]);
+        let scores = scores_tuple.slice(s![.., 0]);
 
         let feature_height = (img_height / *stride as f32).ceil() as usize;
         let feature_width = (img_width / *stride as f32).ceil() as usize;

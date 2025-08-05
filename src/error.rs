@@ -10,8 +10,11 @@ pub enum AppError {
     #[error("Failed to read image data")]
     ImageReadError(#[from] image::ImageError),
 
-    #[error("AI model inference failed")]
+    #[error("AI model inference failed: {0}")]
     InferenceError(#[from] ort::Error),
+
+    #[error("Failed to parse shape: {0}")]
+    ShapeError(#[from] ndarray::ShapeError),
 
     #[error("Database query failed: {0}")]
     DatabaseError(#[from] surrealdb::Error),
@@ -21,9 +24,6 @@ pub enum AppError {
 
     #[error("Invalid request: {0}")]
     BadRequest(String),
-
-    #[error("Entity not found: {0}")]
-    NotFound(String),
 }
 
 impl IntoResponse for AppError {
@@ -31,7 +31,6 @@ impl IntoResponse for AppError {
         let (status, error_message) = match self {
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             AppError::MissingMultipartField(field) => (StatusCode::BAD_REQUEST, format!("Missing field: {}", field)),
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             e => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         };
 

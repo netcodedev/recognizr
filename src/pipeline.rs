@@ -1,156 +1,146 @@
-use crate::{error::AppError, models::DebugParams};
-use crate::models::DetectedFace;
-use image::{DynamicImage, GenericImageView};
-use ndarray::Array;
-use ort::{inputs, session::{Session, SessionOutputs}, value::Value};
-use imageproc::drawing::draw_hollow_rect_mut;
+use crate::error::AppError;
+use crate::models::{DebugParams, DetectedFace};
+use image::{imageops, DynamicImage, RgbImage, Rgba};
+use imageproc::drawing::{draw_filled_circle_mut, draw_hollow_rect_mut};
 use imageproc::rect::Rect;
+use ndarray::{s, Array, ArrayBase, Dim, IxDynImpl, ViewRepr};
+use ort::{inputs, session::{Session}, value::Value};
 use tracing::debug;
 
+// --- TUNING PARAMETERS (match these with your Python script) ---
 const NMS_THRESHOLD: f32 = 0.4;
 const RECOGNIZER_INPUT_SIZE: u32 = 112;
+const DETECTOR_TARGET_SHAPE: (u32, u32) = (640, 640); // (height, width)
 
-/// Takes raw image bytes, runs the detector, and returns a clean list of faces.
+/// Preprocesses an image using the "top-left" letterbox method.
+/// A direct Rust translation of the Python `preprocess_image_topleft` function.
+fn preprocess_image_topleft(
+    img: &DynamicImage,
+    target_height: u32,
+    target_width: u32,
+) -> (RgbImage, f32) {
+    let img_h = img.height();
+    let img_w = img.width();
+
+    let ratio = f32::min(
+        target_width as f32 / img_w as f32,
+        target_height as f32 / img_h as f32,
+    );
+
+    let new_w = (img_w as f32 * ratio).round() as u32;
+    let new_h = (img_h as f32 * ratio).round() as u32;
+
+    let rgb_img = img.to_rgb8();
+    let resized_img = imageops::resize(&rgb_img, new_w, new_h, imageops::FilterType::Triangle);
+    let mut canvas = RgbImage::from_pixel(target_width, target_height, image::Rgb([114, 114, 114]));
+    imageops::overlay(&mut canvas, &resized_img, 0, 0);
+
+    (canvas, ratio)
+}
+
+/// Takes raw image bytes, runs the detector, and returns a clean list of faces and the resize ratio.
 pub fn detect_faces(
     session: &mut Session,
     image_bytes: &[u8],
     params: &DebugParams,
-) -> Result<Vec<DetectedFace>, AppError> {
+) -> Result<(Vec<DetectedFace>, f32), AppError> {
     let image = image::load_from_memory(image_bytes)?;
-    let (img_width, img_height) = image.dimensions();
+    
+    // 1. Preprocess the image using the letterbox method
+    let (processed_img, ratio) =
+        preprocess_image_topleft(&image, DETECTOR_TARGET_SHAPE.0, DETECTOR_TARGET_SHAPE.1);
 
-    let use_bgr = params.order.as_deref() == Some("bgr");
-
-    let mut input_tensor =
-        Array::zeros((1, 3, img_height as usize, img_width as usize));
-
-    for (x, y, pixel) in image.to_rgb8().enumerate_pixels() {
-        let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
-        let (ch0, ch1, ch2) = if use_bgr { (b, g, r) } else { (r, g, b) };
-
-        input_tensor[[0, 0, y as usize, x as usize]] = (ch0 as f32 - 127.5) / 127.5;
-        input_tensor[[0, 1, y as usize, x as usize]] = (ch1 as f32 - 127.5) / 127.5;
-        input_tensor[[0, 2, y as usize, x as usize]] = (ch2 as f32 - 127.5) / 127.5;
+    // 2. Prepare the tensor (BGR order, normalized to [-1, 1])
+    let mut input_tensor = Array::zeros((1, 3, DETECTOR_TARGET_SHAPE.0 as usize, DETECTOR_TARGET_SHAPE.1 as usize));
+    for (x, y, pixel) in processed_img.enumerate_pixels() {
+        input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - 127.5) / 127.5; // Blue
+        input_tensor[[0, 1, y as usize, x as usize]] = (pixel[1] as f32 - 127.5) / 127.5; // Green
+        input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - 127.5) / 127.5; // Red
     }
 
-    let inputs = inputs![Value::from_array(input_tensor)?];
+    // 3. Run Inference
+    let inputs = inputs!["input.1" => Value::from_array(input_tensor)?]?;
     let outputs = session.run(inputs)?;
+    
+    // 4. Extract tensors by name and prepare them for decoding
+    let score_8 = outputs["score_8"].try_extract_tensor::<f32>()?;
+    let bbox_8 = outputs["bbox_8"].try_extract_tensor::<f32>()?;
+    let kps_8 = outputs["kps_8"].try_extract_tensor::<f32>()?;
+    
+    let score_16 = outputs["score_16"].try_extract_tensor::<f32>()?;
+    let bbox_16 = outputs["bbox_16"].try_extract_tensor::<f32>()?;
+    let kps_16 = outputs["kps_16"].try_extract_tensor::<f32>()?;
 
-    let proposals = decode_and_filter_proposals(&outputs, img_width as f32, img_height as f32, params)?;
+    let score_32 = outputs["score_32"].try_extract_tensor::<f32>()?;
+    let bbox_32 = outputs["bbox_32"].try_extract_tensor::<f32>()?;
+    let kps_32 = outputs["kps_32"].try_extract_tensor::<f32>()?;
+    
+    let all_outputs = [
+        (8, score_8, bbox_8, kps_8),
+        (16, score_16, bbox_16, kps_16),
+        (32, score_32, bbox_32, kps_32),
+    ];
+
+    // 5. Decode proposals from the 640x640 space
+    let proposals = decode_proposals(&all_outputs, DETECTOR_TARGET_SHAPE.1 as f32, DETECTOR_TARGET_SHAPE.0 as f32, params)?;
+
+    // 6. Apply Non-Maximum Suppression
     let final_faces = non_maximum_suppression(&proposals, NMS_THRESHOLD);
 
-    Ok(final_faces)
-}
-
-pub fn draw_detections(
-    image: &mut DynamicImage,
-    detections: &[DetectedFace],
-) {
-    debug!("Drawing {} detections on image", detections.len());
-
-    const THICKNESS: u32 = 3;
-
-    for face in detections {
-        // Generate a random color for each box
-        let color = image::Rgba([255, 0, 0, 255]);
-
-        // Create a rectangle from the bounding box coordinates
-        let x = face.bbox[0] as i32;
-        let y = face.bbox[1] as i32;
-        let width = (face.bbox[2] - face.bbox[0]) as u32;
-        let height = (face.bbox[3] - face.bbox[1]) as u32;
-        
-        // Loop to draw multiple rectangles for thickness
-        for i in 0..THICKNESS {
-            // Create a rectangle inset by `i` pixels
-            let rect = Rect::at(x + i as i32, y + i as i32)
-                .of_size(width - (i * 2), height - (i * 2));
-
-            // Draw the hollow rectangle on the image
-            draw_hollow_rect_mut(image, rect, color);
-        }
-    }
+    // 7. Return both the faces and the ratio for coordinate scaling
+    Ok((final_faces, ratio))
 }
 
 /// Decodes raw model output into candidate faces.
-fn decode_and_filter_proposals(
-    outputs: &SessionOutputs,
+fn decode_proposals(
+    outputs: &[(i32, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>); 3],
     img_width: f32,
     img_height: f32,
     params: &DebugParams,
 ) -> Result<Vec<DetectedFace>, AppError> {
+    let conf_threshold = params.threshold.unwrap_or(0.5);
     let mut proposals = Vec::new();
 
-    // SCRFD has 3 strides: 8, 16, 32
-    let strides = [8, 16, 32];
-    let decode_mode = params.decode.as_deref().unwrap_or("ltrb");
-    let conf_threshold = params.threshold.unwrap_or(0.5);
-    for (i, &stride) in strides.iter().enumerate() {
-        let (_scores_shape, scores_data) = outputs[i].try_extract_tensor::<f32>()?;
-        let (_boxes_shape, boxes_data) = outputs[i + 3].try_extract_tensor::<f32>()?;
-        let (_kps_shape, kps_data) = outputs[i + 6].try_extract_tensor::<f32>()?;
+    for (stride, scores_tuple, boxes_tuple, kps_tuple) in outputs {
+        // Manually reconstruct ArrayView from the shape and flat slice provided by ort v2.0.0-rc.1
+        let scores = scores_tuple.slice(s![0, .., 0]);
+        let boxes = boxes_tuple.slice(s![0, .., ..]);
+        let kps = kps_tuple.slice(s![0, .., ..]);
 
-        let feature_height = (img_height / stride as f32).ceil() as usize;
-        let feature_width = (img_width / stride as f32).ceil() as usize;
+        let feature_height = (img_height / *stride as f32).ceil() as usize;
+        let feature_width = (img_width / *stride as f32).ceil() as usize;
 
-        // There are 2 anchors per location for SCRFD
-        for anchor_idx in 0..2 {
-            for y in 0..feature_height {
-                for x in 0..feature_width {
-                    let anchor_center_x = (x as f32 + 0.5) * stride as f32;
-                    let anchor_center_y = (y as f32 + 0.5) * stride as f32;
-
+        for y in 0..feature_height {
+            for x in 0..feature_width {
+                for anchor_idx in 0..2 {
                     let idx = y * feature_width * 2 + x * 2 + anchor_idx;
+                    if idx >= scores.len() { continue; }
+                    let score = scores[idx];
 
-                    // scores_data shape: [N, 1], N = feature_height * feature_width * 2
-                    let score = scores_data[idx];
+                    if score < conf_threshold { continue; }
 
-                    if score < conf_threshold {
-                        continue;
+                    let box_pred_arr = boxes.slice(s![idx as usize, ..]);
+                    let box_pred = box_pred_arr.as_slice().unwrap();
+                    let kps_pred_arr = kps.slice(s![idx as usize, ..]);
+                    let kps_pred = kps_pred_arr.as_slice().unwrap();
+                    let anchor_cx = (x as f32 + 0.5) * *stride as f32;
+                    let anchor_cy = (y as f32 + 0.5) * *stride as f32;
+
+                    // Use linear decoding (no exp) to match the final Python script
+                    let l = box_pred[0] * *stride as f32;
+                    let t = box_pred[1] * *stride as f32;
+                    let r = box_pred[2] * *stride as f32;
+                    let b = box_pred[3] * *stride as f32;
+                    let bbox = [anchor_cx - l, anchor_cy - t, anchor_cx + r, anchor_cy + b];
+
+                    let mut decoded_kps = [[0.0; 2]; 5];
+                    for k in 0..5 {
+                        let kps_x = anchor_cx + kps_pred[k * 2] * *stride as f32;
+                        let kps_y = anchor_cy + kps_pred[k * 2 + 1] * *stride as f32;
+                        decoded_kps[k] = [kps_x, kps_y];
                     }
-
-                    // boxes_data shape: [N, 4]
-                    let box_base = idx * 4;
-                    let box_preds = &boxes_data[box_base..box_base + 4];
-
-                    // kps_data shape: [N, 10]
-                    let kps_base = idx * 10;
-                    let kps_preds = &kps_data[kps_base..kps_base + 10];
-
-                    // Decode bounding box
-                    let (x1_raw, y1_raw, x2_raw, y2_raw) = if decode_mode == "center_wh" {
-                        // Alternative decoding: center offset, width, and height
-                        let dx = box_preds[0] * stride as f32;
-                        let dy = box_preds[1] * stride as f32;
-                        let dw = box_preds[2].exp() * stride as f32;
-                        let dh = box_preds[3].exp() * stride as f32;
-                        let cx = anchor_center_x + dx;
-                        let cy = anchor_center_y + dy;
-                        (cx - dw * 0.5, cy - dh * 0.5, cx + dw * 0.5, cy + dh * 0.5)
-                    } else {
-                        // Default decoding: left, top, right, bottom distances
-                        let l = box_preds[0].exp() * stride as f32;
-                        let t = box_preds[1].exp() * stride as f32;
-                        let r = box_preds[2].exp() * stride as f32;
-                        let b = box_preds[3].exp() * stride as f32;
-                        (anchor_center_x - l, anchor_center_y - t, anchor_center_x + r, anchor_center_y + b)
-                    };
-                    let x1 = x1_raw.max(0.0);
-                    let y1 = y1_raw.max(0.0);
-                    let x2 = x2_raw.min(img_width - 1.0);
-                    let y2 = y2_raw.min(img_height - 1.0);
-                    if x1 >= x2 || y1 >= y2 { continue; }
-                    let bbox = [x1, y1, x2, y2];
-                    debug!("Decoded bbox: {:?}", bbox);
-
-                    // Decode keypoints
-                    let mut kps = [[0.0; 2]; 5];
-                    for j in 0..5 {
-                        kps[j][0] = anchor_center_x + kps_preds[j * 2] * stride as f32;
-                        kps[j][1] = anchor_center_y + kps_preds[j * 2 + 1] * stride as f32;
-                    }
-
-                    proposals.push(DetectedFace { bbox, kps, score });
+                    
+                    proposals.push(DetectedFace { bbox, kps: decoded_kps, score });
                 }
             }
         }
@@ -162,18 +152,24 @@ fn decode_and_filter_proposals(
 fn non_maximum_suppression(proposals: &[DetectedFace], iou_threshold: f32) -> Vec<DetectedFace> {
     let mut sorted_proposals = proposals.to_vec();
     sorted_proposals.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    
+    let mut keep_indices = Vec::new();
+    let mut suppressed = vec![false; sorted_proposals.len()];
 
-    let mut final_faces = Vec::new();
-    while !sorted_proposals.is_empty() {
-        let best = sorted_proposals.remove(0);
-        final_faces.push(best.clone());
-        
-        sorted_proposals.retain(|p| {
-            let iou = calculate_iou(&best.bbox, &p.bbox);
-            iou < iou_threshold
-        });
+    for i in 0..sorted_proposals.len() {
+        if suppressed[i] { continue; }
+        keep_indices.push(i);
+
+        for j in (i + 1)..sorted_proposals.len() {
+            if suppressed[j] { continue; }
+            let iou = calculate_iou(&sorted_proposals[i].bbox, &sorted_proposals[j].bbox);
+            if iou > iou_threshold {
+                suppressed[j] = true;
+            }
+        }
     }
-    final_faces
+    
+    keep_indices.into_iter().map(|i| sorted_proposals[i].clone()).collect()
 }
 
 fn calculate_iou(box_a: &[f32; 4], box_b: &[f32; 4]) -> f32 {
@@ -190,23 +186,20 @@ fn calculate_iou(box_a: &[f32; 4], box_b: &[f32; 4]) -> f32 {
     let area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1]);
     let union_area = area_a + area_b - intersection_area;
     
-    if union_area == 0.0 { 0.0 } else { intersection_area / union_area }
+    if union_area <= 0.0 { 0.0 } else { intersection_area / union_area }
 }
 
-
-/// Takes a detected face, crops, aligns, and generates a 512-dim embedding.
+/// Takes a detected face, crops, and generates a 512-dim embedding.
 pub fn get_recognition_embedding(
     session: &mut Session,
     original_image: &DynamicImage,
     face: &DetectedFace,
 ) -> Result<Vec<f32>, AppError> {
-    // NOTE: A simple crop is used here. For higher accuracy, an affine transformation
-    // using the keypoints to align the face should be implemented.
     let cropped_face = original_image.crop_imm(
-        face.bbox[0] as u32,
-        face.bbox[1] as u32,
-        (face.bbox[2] - face.bbox[0]) as u32,
-        (face.bbox[3] - face.bbox[1]) as u32,
+        face.bbox[0].round() as u32,
+        face.bbox[1].round() as u32,
+        (face.bbox[2] - face.bbox[0]).round().max(0.0) as u32,
+        (face.bbox[3] - face.bbox[1]).round().max(0.0) as u32,
     );
 
     let resized = cropped_face.resize_exact(
@@ -215,21 +208,55 @@ pub fn get_recognition_embedding(
         image::imageops::FilterType::Triangle,
     );
 
-    let mut input_tensor =
-        Array::zeros((1, 3, RECOGNIZER_INPUT_SIZE as usize, RECOGNIZER_INPUT_SIZE as usize));
+    let mut input_tensor = Array::zeros((1, 3, RECOGNIZER_INPUT_SIZE as usize, RECOGNIZER_INPUT_SIZE as usize));
     for (x, y, pixel) in resized.to_rgb8().enumerate_pixels() {
+        // Use BGR order for consistency
         input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - 127.5) / 127.5;
         input_tensor[[0, 1, y as usize, x as usize]] = (pixel[1] as f32 - 127.5) / 127.5;
         input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - 127.5) / 127.5;
     }
 
-    let inputs = inputs![Value::from_array(input_tensor)?];
+    let inputs = inputs!["input.1" => Value::from_array(input_tensor)?]?;
     let outputs = session.run(inputs)?;
 
-    let (_, embedding_slice) = outputs[0].try_extract_tensor()?;
-    let mut embedding: Vec<f32> = embedding_slice.to_vec();
+    let data = outputs[0].try_extract_tensor::<f32>()?;
+    let mut embedding: Vec<f32> = data.iter().cloned().collect();
+    
     let norm = (embedding.iter().map(|v| v.powi(2)).sum::<f32>()).sqrt();
-    embedding.iter_mut().for_each(|v| *v /= norm);
+    if norm > 0.0 {
+        embedding.iter_mut().for_each(|v| *v /= norm);
+    }
 
     Ok(embedding)
+}
+
+/// Draws bounding boxes and keypoints on an image.
+pub fn draw_detections(
+    image: &mut DynamicImage,
+    detections: &[DetectedFace],
+) {
+    debug!("Drawing {} detections on image", detections.len());
+
+    const THICKNESS: u32 = 3;
+    const DOT_RADIUS: i32 = 8;
+    let box_color = Rgba([0u8, 255u8, 0u8, 255u8]); // Green
+    let dot_color = Rgba([255u8, 0u8, 0u8, 255u8]); // Red
+
+    for face in detections {
+        let x = face.bbox[0].round() as i32;
+        let y = face.bbox[1].round() as i32;
+        let width = (face.bbox[2] - face.bbox[0]).round() as u32;
+        let height = (face.bbox[3] - face.bbox[1]).round() as u32;
+        
+        for i in 0..THICKNESS {
+            let rect = Rect::at(x + i as i32, y + i as i32)
+                .of_size(width.saturating_sub(i * 2), height.saturating_sub(i * 2));
+            draw_hollow_rect_mut(image, rect, box_color);
+        }
+
+        for point in face.kps {
+            let center = (point[0].round() as i32, point[1].round() as i32);
+            draw_filled_circle_mut(image, center, DOT_RADIUS, dot_color);
+        }
+    }
 }

@@ -26,7 +26,7 @@ async fn enroll_handler(
     let (name, image_bytes) = parse_enroll_multipart(multipart).await?;
     let original_image = image::load_from_memory(&image_bytes)?;
 
-    let faces = {
+    let (mut faces, ratio) = {
         let mut detector_session_guard = state.detector_session.lock().unwrap();
         detect_faces(&mut detector_session_guard, &image_bytes, &params)?
     };
@@ -37,7 +37,12 @@ async fn enroll_handler(
             faces.len()
         )));
     }
-    let face = &faces[0];
+    let face = &mut faces[0];
+    face.bbox.iter_mut().for_each(|v| *v /= ratio);
+    face.kps.iter_mut().for_each(|point| {
+        point[0] /= ratio;
+        point[1] /= ratio;
+    });
 
     let embedding = {
         let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
@@ -58,7 +63,7 @@ async fn recognize_handler(
     let image_bytes = parse_recognize_multipart(multipart).await?;
     let original_image = image::load_from_memory(&image_bytes)?;
 
-    let faces = {
+    let (mut faces, ratio) = {
         let mut detector_session_guard = state.detector_session.lock().unwrap();
         detect_faces(&mut detector_session_guard, &image_bytes, &params)?
     };
@@ -67,7 +72,12 @@ async fn recognize_handler(
     }
 
     let mut results = Vec::new();
-    for face in faces {
+    for face in &mut faces {
+        face.bbox.iter_mut().for_each(|coord| *coord /= ratio);
+        face.kps.iter_mut().for_each(|point| {
+            point[0] /= ratio;
+            point[1] /= ratio;
+        });
         let embedding = {
             let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
             get_recognition_embedding(&mut recognizer_session_guard, &original_image, &face)?
@@ -96,10 +106,18 @@ async fn debug_detector_handler(
     let image_bytes = parse_recognize_multipart(multipart).await?;
     let mut image = image::load_from_memory(&image_bytes)?;
 
-    let faces = {
+    let (mut faces, ratio) = {
         let mut detector_session_guard = state.detector_session.lock().unwrap();
         detect_faces(&mut detector_session_guard, &image_bytes, &params)?
     };
+
+    for face in &mut faces {
+        face.bbox.iter_mut().for_each(|coord| *coord /= ratio);
+        face.kps.iter_mut().for_each(|point| {
+            point[0] /= ratio;
+            point[1] /= ratio;
+        });
+    }
 
     // Draw the detections onto the image
     draw_detections(&mut image, &faces);

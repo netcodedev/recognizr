@@ -28,8 +28,4 @@ pub struct RecognitionResult {
 pub struct DebugParams {
     // You can call /debug/detector?threshold=0.6
     pub threshold: Option<f32>,
-    // You can call /debug/detector?order=bgr
-    pub order: Option<String>,
-    // You can call /debug/detector?decode=center_wh
-    pub decode: Option<String>,
 }

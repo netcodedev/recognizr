@@ -21,35 +21,11 @@ echo "Using threshold: $THRESHOLD"
 echo ""
 
 # Test 1: RGB with "ltrb" decoding
-echo "Running Test 1: RGB color order, LTRB decoding..."
-curl -s -X POST "$HOST/debug/detector?threshold=$THRESHOLD&order=rgb&decode=ltrb" \
+echo "Running Test"
+curl -s -X POST "$HOST/debug/detector?threshold=$THRESHOLD" \
   -F "image=@$IMAGE_FILE" \
-  --output debug_rgb_ltrb.png
-echo "  -> Saved to debug_rgb_ltrb.png"
-echo ""
-
-# Test 2: BGR with "ltrb" decoding
-echo "Running Test 2: BGR color order, LTRB decoding..."
-curl -s -X POST "$HOST/debug/detector?threshold=$THRESHOLD&order=bgr&decode=ltrb" \
-  -F "image=@$IMAGE_FILE" \
-  --output debug_bgr_ltrb.png
-echo "  -> Saved to debug_bgr_ltrb.png"
-echo ""
-
-# Test 3: RGB with "center_wh" decoding
-echo "Running Test 3: RGB color order, Center/WH decoding..."
-curl -s -X POST "$HOST/debug/detector?threshold=$THRESHOLD&order=rgb&decode=center_wh" \
-  -F "image=@$IMAGE_FILE" \
-  --output debug_rgb_center.png
-echo "  -> Saved to debug_rgb_center.png"
-echo ""
-
-# Test 4: BGR with "center_wh" decoding
-echo "Running Test 4: BGR color order, Center/WH decoding..."
-curl -s -X POST "$HOST/debug/detector?threshold=$THRESHOLD&order=bgr&decode=center_wh" \
-  -F "image=@$IMAGE_FILE" \
-  --output debug_bgr_center.png
-echo "  -> Saved to debug_bgr_center.png"
+  --output debug_image.png
+echo "  -> Saved to debug_image.png"
 echo ""
 
 echo "--- Test Complete ---"

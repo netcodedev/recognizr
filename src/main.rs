@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     // --- Load Models ---
     tracing::info!("Loading models...");
     let detector_session = SessionBuilder::new()?
-        .commit_from_file("models/scrfd_2.5g_bnkps.onnx")?;
+        .commit_from_file("models/scrfd_10g_bnkps.onnx")?;
     let recognizer_session = SessionBuilder::new()?
         .commit_from_file("models/face_recognition.onnx")?;
     tracing::info!("Models loaded successfully.");

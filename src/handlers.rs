@@ -104,7 +104,7 @@ async fn recognize_handler(
         };
 
         let mut response = state.db
-            .query("SELECT name, vector::distance::euclidean(embedding, $query) AS distance FROM person ORDER BY distance ASC LIMIT 1")
+            .query("SELECT name, vector::similarity::cosine(embedding, $query) AS distance FROM person ORDER BY distance DESC LIMIT 1")
             .bind(("query", embedding))
             .await?;
 

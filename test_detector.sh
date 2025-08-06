@@ -2,7 +2,7 @@
 
 # --- Configuration ---
 # Make sure the image file specified here exists in the same directory as the script.
-IMAGE_FILE="group.jpg"
+IMAGE_FILE="me.jpg"
 # The base URL for your running application.
 HOST="http://localhost:3000"
 # The threshold to test with.
@@ -22,11 +22,7 @@ echo ""
 
 # Test 1: RGB with "ltrb" decoding
 echo "Running Test"
-curl -s -X POST "$HOST/debug/detector?threshold=$THRESHOLD" \
+time curl -s -X POST "$HOST/debug/detector?threshold=$THRESHOLD" \
   -F "image=@$IMAGE_FILE" \
   --output debug_image.png
 echo "  -> Saved to debug_image.png"
-echo ""
-
-echo "--- Test Complete ---"
-echo "Please inspect the four 'debug_*.png' images to find the correct combination."

@@ -1,4 +1,5 @@
 /target
 debug_*.png
 *.jpg
+*.ttf
 models/*

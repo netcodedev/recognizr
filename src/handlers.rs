@@ -9,7 +9,9 @@ use axum::{
     Json,
 };
 use image::GenericImageView;
+use tracing::debug;
 use std::sync::Arc;
+use std::time::Instant;
 
 const X_OFFSET: f32 = 50.0;
 const Y_OFFSET: f32 = 50.0;
@@ -122,20 +124,29 @@ async fn debug_detector_handler(
     Query(params): Query<DebugParams>,
     multipart: Multipart,
 ) -> Result<(HeaderMap, Vec<u8>), AppError> {
+    let request_start_time = Instant::now();
+
+    // --- 1. Image Loading & Parsing ---
+    let image_load_start = Instant::now();
     let image_bytes = parse_recognize_multipart(multipart).await?;
     let mut image = image::load_from_memory(&image_bytes)?;
     let (original_w, original_h) = image.dimensions();
+    debug!("Image loaded in {} ms", image_load_start.elapsed().as_millis());
 
-    // 1. Detect all faces in the image
+    // --- 2. Detect all faces in the image ---
+    let detection_start = Instant::now();
     let (detected_faces, new_w, new_h) = {
         let mut detector_session_guard = state.detector_session.lock().unwrap();
         detect_faces(&mut detector_session_guard, &image_bytes, &params)?
     };
+    debug!("Face detection completed in {} ms", detection_start.elapsed().as_millis());
 
     let mut final_results = Vec::new();
 
     // 2. For each detected face, run recognition
+    let faces_recognition_start = Instant::now();
     for mut face in detected_faces {
+        let face_recognition_start = Instant::now();
         // --- Scale coordinates back to original image space ---
         let scale_w = original_w as f32 / new_w as f32;
         let scale_h = original_h as f32 / new_h as f32;
@@ -150,31 +161,43 @@ async fn debug_detector_handler(
         });
         
         // --- Run Recognition and Query DB ---
+        let embedding_start = Instant::now();
         let embedding = {
             let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
             get_recognition_embedding(&mut recognizer_session_guard, &image, &face)?
         };
+        debug!("Face embedding computed in {} ms", embedding_start.elapsed().as_millis());
         
+        let db_query_start = Instant::now();
         let mut response = state.db
             .query("SELECT name, vector::similarity::cosine(embedding, $query) AS similarity FROM person ORDER BY similarity DESC LIMIT 1")
             .bind(("query", embedding))
             .await?;
+        debug!("DB query completed in {} ms", db_query_start.elapsed().as_millis());
         
         let recognition: Option<(String, f32)> = response.take::<Option<RecognitionResult>>(0)?
             .map(|r| (r.name, r.similarity)); // Assuming you renamed distance to similarity_score
 
         final_results.push(FinalResult { detection: face, recognition });
+        debug!("Face recognition completed in {} ms", face_recognition_start.elapsed().as_millis());
     }
+    debug!("All faces processed in {} ms", faces_recognition_start.elapsed().as_millis());
 
     // 3. Draw the final results (boxes, dots, AND labels)
+    let draw_start = Instant::now();
     draw_detections(&mut image, &final_results, &state.font);
+    debug!("Drawing completed in {} ms", draw_start.elapsed().as_millis());
 
     // 4. Encode and return the image
+    let encode_start = Instant::now();
     let mut buffer = std::io::Cursor::new(Vec::new());
-    image.write_to(&mut buffer, image::ImageFormat::Jpeg)?;
+    image.write_to(&mut buffer, image::ImageFormat::Png)?;
     let response_bytes = buffer.into_inner();
+    debug!("Image encoding completed in {} ms", encode_start.elapsed().as_millis());
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, "image/jpeg".parse().unwrap());
+    headers.insert(header::CONTENT_TYPE, "image/png".parse().unwrap());
+    debug!("Total request time: {} ms", request_start_time.elapsed().as_millis());
+    debug!("--------------------------");
     Ok((headers, response_bytes))
 }
 

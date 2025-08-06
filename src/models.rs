@@ -24,6 +24,11 @@ pub struct RecognitionResult {
     pub bbox: Option<[f32; 4]>,
 }
 
+pub struct FinalResult {
+    pub detection: DetectedFace,
+    pub recognition: Option<(String, f32)>, // (Name, Similarity Score)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DebugParams {
     // You can call /debug/detector?threshold=0.6

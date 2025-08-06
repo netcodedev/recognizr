@@ -1,10 +1,11 @@
 use crate::error::AppError;
-use crate::models::{DebugParams, DetectedFace};
+use crate::models::{DebugParams, DetectedFace, FinalResult};
 use image::{imageops, DynamicImage, RgbImage, Rgba};
-use imageproc::drawing::{draw_filled_circle_mut, draw_hollow_rect_mut};
+use imageproc::drawing::{draw_filled_rect_mut, draw_hollow_rect_mut, draw_text_mut};
 use imageproc::rect::Rect;
 use ndarray::{s, Array, ArrayBase, Dim, IxDynImpl, ViewRepr};
 use ort::{inputs, session::{Session}, value::Value};
+use ab_glyph::{FontArc, PxScale};
 use tracing::debug;
 
 // --- TUNING PARAMETERS (match these with your Python script) ---
@@ -91,7 +92,7 @@ fn decode_proposals(
     img_height: f32,
     params: &DebugParams,
 ) -> Result<Vec<DetectedFace>, AppError> {
-    let conf_threshold = params.threshold.unwrap_or(0.5);
+    let conf_threshold = params.threshold.unwrap_or(0.7);
     let mut proposals = Vec::new();
 
     for (stride, scores_tuple, boxes, kps) in outputs {
@@ -222,30 +223,66 @@ pub fn get_recognition_embedding(
 /// Draws bounding boxes and keypoints on an image.
 pub fn draw_detections(
     image: &mut DynamicImage,
-    detections: &[DetectedFace],
+    results: &[FinalResult],
+    font: &FontArc,
 ) {
-    debug!("Drawing {} detections on image", detections.len());
+    debug!("Drawing {} detections on image", results.len());
 
     const THICKNESS: u32 = 3;
-    const DOT_RADIUS: i32 = 8;
-    let box_color = Rgba([0u8, 255u8, 0u8, 255u8]); // Green
-    let dot_color = Rgba([255u8, 0u8, 0u8, 255u8]); // Red
+    // const DOT_RADIUS: i32 = 8;
+    let box_color = Rgba([0u8, 0u8, 255u8, 255u8]);     // Blue
+    // let dot_color = Rgba([255u8, 0u8, 0u8, 255u8]);     // Red
+    let text_color = Rgba([255u8, 255u8, 255u8, 255u8]); // White (better contrast on blue)
 
-    for face in detections {
-        let x = face.bbox[0].round() as i32;
-        let y = face.bbox[1].round() as i32;
-        let width = (face.bbox[2] - face.bbox[0]).round() as u32;
-        let height = (face.bbox[3] - face.bbox[1]).round() as u32;
+    for result in results {
+        let face = &result.detection;
+        let x1 = face.bbox[0].round() as i32;
+        let y1 = face.bbox[1].round() as i32;
+        let x2 = face.bbox[2].round() as i32;
+        let y2 = face.bbox[3].round() as i32;
+        let width = (x2 - x1) as u32;
         
+        // Draw Bounding Box (unchanged)
         for i in 0..THICKNESS {
-            let rect = Rect::at(x + i as i32, y + i as i32)
-                .of_size(width.saturating_sub(i * 2), height.saturating_sub(i * 2));
+            let rect = Rect::at(x1 + i as i32, y1 + i as i32)
+                .of_size(width.saturating_sub(i * 2), (y2 - y1).saturating_sub(i as i32 * 2) as u32);
             draw_hollow_rect_mut(image, rect, box_color);
         }
 
-        for point in face.kps {
-            let center = (point[0].round() as i32, point[1].round() as i32);
-            draw_filled_circle_mut(image, center, DOT_RADIUS, dot_color);
-        }
+        // Draw Keypoints (I've uncommented your code for this)
+        // for point in face.kps {
+        //     let center = (point[0].round() as i32, point[1].round() as i32);
+        //     draw_filled_circle_mut(image, center, DOT_RADIUS, dot_color);
+        // }
+
+        // --- NEW: Draw Text Label with Background ---
+        let text = match &result.recognition {
+            Some((name, score)) => {
+                if *score > 0.4 { // Only show label if similarity is decent
+                    name.to_string()
+                } else {
+                    "Unknown".to_string()
+                }
+            },
+            None => "Unknown".to_string(),
+        };
+
+        let font_scale = PxScale::from(32.0);
+        
+        // 1. Calculate the height of the text to size the background box
+        let text_height = 32;
+        let text_padding = 5; // Add some padding around the text
+
+        // 2. Define the filled rectangle for the background
+        let label_box_height = text_height + (text_padding * 2);
+        let label_box_rect = Rect::at(x1, y2)
+            .of_size(width, label_box_height);
+
+        // 3. Draw the filled background box
+        draw_filled_rect_mut(image, label_box_rect, box_color);
+        
+        // 4. Position and draw the text on top of the background
+        let text_position = (x1 + text_padding as i32, y2 + text_padding as i32);
+        draw_text_mut(image, text_color, text_position.0, text_position.1, font_scale, font, &text);
     }
 }

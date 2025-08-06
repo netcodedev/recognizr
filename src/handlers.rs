@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::models::{DebugParams, Person, RecognitionResult};
+use crate::models::{DebugParams, FinalResult, Person, RecognitionResult};
 use crate::pipeline::{detect_faces, draw_detections, get_recognition_embedding};
 use crate::AppState;
 use axum::routing::post;
@@ -126,15 +126,19 @@ async fn debug_detector_handler(
     let mut image = image::load_from_memory(&image_bytes)?;
     let (original_w, original_h) = image.dimensions();
 
-    let (mut faces, new_w, new_h) = {
+    // 1. Detect all faces in the image
+    let (detected_faces, new_w, new_h) = {
         let mut detector_session_guard = state.detector_session.lock().unwrap();
         detect_faces(&mut detector_session_guard, &image_bytes, &params)?
     };
 
-    let scale_w = original_w as f32 / new_w as f32;
-    let scale_h = original_h as f32 / new_h as f32;
+    let mut final_results = Vec::new();
 
-    for face in &mut faces {
+    // 2. For each detected face, run recognition
+    for mut face in detected_faces {
+        // --- Scale coordinates back to original image space ---
+        let scale_w = original_w as f32 / new_w as f32;
+        let scale_h = original_h as f32 / new_h as f32;
         face.bbox[0] = (face.bbox[0] * scale_w) - X_OFFSET; // x1
         face.bbox[2] = (face.bbox[2] * scale_w) - X_OFFSET; // x2
         face.bbox[1] = (face.bbox[1] * scale_h) - Y_OFFSET; // y1
@@ -144,17 +148,33 @@ async fn debug_detector_handler(
             point[0] = (point[0] * scale_w) - X_OFFSET; // x
             point[1] = (point[1] * scale_h) - Y_OFFSET; // y
         });
+        
+        // --- Run Recognition and Query DB ---
+        let embedding = {
+            let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
+            get_recognition_embedding(&mut recognizer_session_guard, &image, &face)?
+        };
+        
+        let mut response = state.db
+            .query("SELECT name, vector::similarity::cosine(embedding, $query) AS similarity FROM person ORDER BY similarity DESC LIMIT 1")
+            .bind(("query", embedding))
+            .await?;
+        
+        let recognition: Option<(String, f32)> = response.take::<Option<RecognitionResult>>(0)?
+            .map(|r| (r.name, r.similarity)); // Assuming you renamed distance to similarity_score
+
+        final_results.push(FinalResult { detection: face, recognition });
     }
 
-    draw_detections(&mut image, &faces);
+    // 3. Draw the final results (boxes, dots, AND labels)
+    draw_detections(&mut image, &final_results, &state.font);
 
+    // 4. Encode and return the image
     let mut buffer = std::io::Cursor::new(Vec::new());
-    image.write_to(&mut buffer, image::ImageFormat::Png)?;
+    image.write_to(&mut buffer, image::ImageFormat::Jpeg)?;
     let response_bytes = buffer.into_inner();
-
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, "image/png".parse().unwrap());
-
+    headers.insert(header::CONTENT_TYPE, "image/jpeg".parse().unwrap());
     Ok((headers, response_bytes))
 }
 

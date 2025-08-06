@@ -2,11 +2,11 @@
 
 # --- Configuration ---
 # Make sure the image file specified here exists in the same directory as the script.
-IMAGE_FILE="me.jpg"
+IMAGE_FILE="group.jpg"
 # The base URL for your running application.
 HOST="http://localhost:3000"
 # The threshold to test with.
-THRESHOLD="0.2"
+THRESHOLD="0.7"
 # ---------------------
 
 # Check if the image file exists before starting.

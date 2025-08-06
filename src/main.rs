@@ -1,5 +1,6 @@
 use ort::{session::Session, session::builder::SessionBuilder};
-use std::sync::{Arc, Mutex};
+use ab_glyph::FontArc;
+use std::{fs, sync::{Arc, Mutex}};
 use surrealdb::{
     engine::remote::ws::{Client, Ws},
     opt::auth::Root,
@@ -16,6 +17,7 @@ pub struct AppState {
     db: Surreal<Client>,
     detector_session: Mutex<Session>,
     recognizer_session: Mutex<Session>,
+    font: FontArc,
 }
 
 #[tokio::main]
@@ -27,6 +29,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    // --- Load the Font ---
+    tracing::info!("Loading font...");
+    let font_data = fs::read("DejaVuSansMono.ttf")?;
+    let font = FontArc::try_from_vec(font_data)?; 
+    tracing::info!("Font loaded successfully.");
 
     // --- Load Models ---
     tracing::info!("Loading models...");
@@ -52,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
         db,
         detector_session: Mutex::new(detector_session),
         recognizer_session: Mutex::new(recognizer_session),
+        font
     });
 
     // --- Run Server ---

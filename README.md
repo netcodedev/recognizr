@@ -97,19 +97,19 @@ To run with GPU acceleration, you must set the LD_LIBRARY_PATH environment varia
 
 ### Running on Arch Linux
 
-    ```bash
-    export LD_LIBRARY_PATH=$ORT_LIB_PATH:/opt/cuda/lib:$LD_LIBRARY_PATH
-    RUST_LOG=recognizr=info ./target/release/recognizr
-    ```
+```bash
+export LD_LIBRARY_PATH=$ORT_LIB_PATH:/opt/cuda/lib:$LD_LIBRARY_PATH
+RUST_LOG=recognizr=info ./target/release/recognizr
+```
 
 ### Running on Debian / Ubuntu
 
 The default CUDA path is different.
 
-    ```bash
-    export LD_LIBRARY_PATH=$ORT_LIB_PATH:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-    RUST_LOG=recognizr=info ./target/release/recognizr
-    ```
+```bash
+export LD_LIBRARY_PATH=$ORT_LIB_PATH:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+RUST_LOG=recognizr=info ./target/release/recognizr
+```
 
 The server will start on [http://localhost:3000](http://localhost:3000).
 

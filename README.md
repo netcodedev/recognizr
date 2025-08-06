@@ -151,16 +151,16 @@ Example Success Response:
 
 ```json
 [
-{
-    "name": "Ada Lovelace",
-    "similarity_score": 0.87,
-    "bbox": [
-    150.5,
-    210.2,
-    390.8,
-    505.1
-    ]
-}
+    {
+        "name": "Ada Lovelace",
+        "similarity_score": 0.87,
+        "bbox": [
+        150.5,
+        210.2,
+        390.8,
+        505.1
+        ]
+    }
 ]
 ```
 

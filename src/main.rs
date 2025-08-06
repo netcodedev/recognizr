@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     let detector_session = SessionBuilder::new()?
         .commit_from_file("models/scrfd_10g_bnkps.onnx")?;
     let recognizer_session = SessionBuilder::new()?
-        .commit_from_file("models/face_recognition.onnx")?;
+        .commit_from_file("models/arcface_r100.onnx")?;
     tracing::info!("Models loaded successfully.");
 
     // --- Connect to SurrealDB ---

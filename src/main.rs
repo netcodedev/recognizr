@@ -1,4 +1,4 @@
-use ort::{session::Session, session::builder::SessionBuilder};
+use ort::{execution_providers::CUDAExecutionProvider, session::{builder::SessionBuilder, Session}};
 use ab_glyph::FontArc;
 use std::{fs, sync::{Arc, Mutex}};
 use surrealdb::{
@@ -37,6 +37,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Font loaded successfully.");
 
     // --- Load Models ---
+    ort::init()
+        .with_execution_providers([CUDAExecutionProvider::default().build()])
+        .commit()?;
+    
     tracing::info!("Loading models...");
     let detector_session = SessionBuilder::new()?
         .commit_from_file("models/scrfd_10g_bnkps.onnx")?;

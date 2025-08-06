@@ -19,7 +19,7 @@ pub struct DetectedFace {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecognitionResult {
     pub name: String,
-    pub distance: f32,
+    pub similarity: f32,
     #[serde(skip_serializing_if = "Option::is_none")] 
     pub bbox: Option<[f32; 4]>,
 }

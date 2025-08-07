@@ -9,8 +9,10 @@ This project was built to be a robust foundation for various computer vision tas
 * **Fast Inference:** Built in Rust with the `ort` crate, leveraging the high-performance ONNX Runtime.
 * **GPU Acceleration:** Optional support for NVIDIA GPUs via CUDA for a >15x performance increase.
 * **State-of-the-Art Models:** Uses powerful, pre-trained models for face detection (SCRFD) and recognition (InsightFace ArcFace R100).
+* **Automatic Model Adaptation:** Dynamically detects model output structure at startup for compatibility with different model variants.
+* **Optimized Performance:** Pre-computed output mappings eliminate shape analysis overhead during inference.
 * **Vector Search:** Utilizes SurrealDB for efficient and scalable similarity searches on face embeddings.
-* **Robust API:** Built with `axum`, providing endpoints for enrolling, recognizing, and debugging.
+* **Robust API:** Built with `axum`, providing endpoints for enrolling, recognizing, and debugging with comprehensive input validation.
 * **Advanced Debugging:** A dedicated debug endpoint that visually renders detection boxes, keypoints, and recognition labels on an image.
 
 ## Setup and Installation
@@ -58,9 +60,14 @@ Recognizr uses a configuration file to manage all settings including file paths,
     [font]
     path = "DejaVuSansMono.ttf"
 
-    [models]
-    detector_path = "models/scrfd_10g_bnkps.onnx"
-    recognizer_path = "models/arcface_r100.onnx"
+    [models.detector]
+    path = "models/scrfd_10g_bnkps.onnx"
+    strides = [8, 16, 32]
+    input_shape = [640, 640]  # [height, width]
+
+    [models.recognizer]
+    path = "models/arcface_r100.onnx"
+    input_size = 112
 
     [database]
     host = "127.0.0.1"
@@ -84,8 +91,10 @@ Recognizr uses a configuration file to manage all settings including file paths,
     # Override server port
     export RECOGNIZR_SERVER_PORT=8080
 
-    # Override model paths
+    # Override model paths and settings
     export RECOGNIZR_MODELS_DETECTOR_PATH=/custom/path/detector.onnx
+    export RECOGNIZR_MODELS_DETECTOR_INPUT_SHAPE="[512,512]"
+    export RECOGNIZR_MODELS_RECOGNIZER_INPUT_SIZE=112
     ```
 
 ### 3. Required Assets & Models
@@ -239,9 +248,36 @@ Recognizr uses a flexible configuration system that supports both file-based con
 The `config.toml` file contains all application settings organized into logical sections:
 
 * **`[font]`** - Font file configuration for debug rendering
-* **`[models]`** - AI model file paths
+* **`[models.detector]`** - Face detector model configuration
+* **`[models.recognizer]`** - Face recognizer model configuration
 * **`[database]`** - SurrealDB connection settings
 * **`[server]`** - HTTP server configuration
+
+### Model Configuration
+
+Recognizr automatically detects model outputs by analyzing their shapes at startup, but requires some configuration to work with different model architectures:
+
+#### Detector Configuration (`[models.detector]`)
+
+* **`path`** - Path to the ONNX detector model file
+* **`strides`** - Detection strides used by the model (typically `[8, 16, 32]` for SCRFD)
+* **`input_shape`** - Model input dimensions as `[height, width]` (e.g., `[640, 640]`)
+
+#### Recognizer Configuration (`[models.recognizer]`)
+
+* **`path`** - Path to the ONNX recognizer model file
+* **`input_size`** - Square input size for face crops (e.g., `112` for 112x112 input)
+
+#### Automatic Output Detection
+
+The system automatically:
+
+1. **Analyzes model outputs** at startup by running inference once with dummy input
+2. **Matches outputs by shape** to determine which correspond to scores, bounding boxes, and keypoints
+3. **Pre-computes mappings** for efficient runtime inference
+4. **Supports different model architectures** as long as they follow the SCRFD output pattern
+
+This means you can use different SCRFD variants or input sizes without manual output mapping configuration.
 
 ### Environment Variable Overrides
 
@@ -260,12 +296,34 @@ export RECOGNIZR_DATABASE_PASSWORD=mypassword
 export RECOGNIZR_SERVER_HOST=127.0.0.1
 export RECOGNIZR_SERVER_PORT=8080
 
-# Model paths
+# Detector model configuration
 export RECOGNIZR_MODELS_DETECTOR_PATH=/custom/models/detector.onnx
+export RECOGNIZR_MODELS_DETECTOR_STRIDES="[8,16,32]"
+export RECOGNIZR_MODELS_DETECTOR_INPUT_SHAPE="[512,512]"
+
+# Recognizer model configuration
 export RECOGNIZR_MODELS_RECOGNIZER_PATH=/custom/models/recognizer.onnx
+export RECOGNIZR_MODELS_RECOGNIZER_INPUT_SIZE=112
 
 # Font path
 export RECOGNIZR_FONT_PATH=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
 ```
 
 This makes it easy to deploy Recognizr in different environments (development, staging, production) without modifying the configuration file.
+
+## Input Validation
+
+Recognizr includes comprehensive input validation to ensure robust operation:
+
+### Image Validation
+
+* **File size**: Maximum 15MB per image
+* **Dimensions**: Minimum 32x32 pixels, maximum 8192x8192 pixels
+* **Format**: Supports common image formats (JPEG, PNG, etc.)
+
+### Name Validation (for enrollment)
+
+* **Length**: Maximum 100 characters
+* **Content**: Cannot be empty or whitespace-only
+
+These limits help prevent resource exhaustion and ensure consistent performance across different deployment environments.

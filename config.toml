@@ -1,0 +1,20 @@
+# Recognizr Configuration File
+
+[font]
+path = "DejaVuSansMono.ttf"
+
+[models]
+detector_path = "models/scrfd_10g_bnkps.onnx"
+recognizer_path = "models/arcface_r100.onnx"
+
+[database]
+host = "127.0.0.1"
+port = 8000
+username = "root"
+password = "root"
+namespace = "test"
+database = "test"
+
+[server]
+host = "0.0.0.0"
+port = 3000

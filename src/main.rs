@@ -8,6 +8,7 @@ use surrealdb::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod config;
 mod error;
 mod handlers;
 mod models;
@@ -30,10 +31,15 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // --- Load Configuration ---
+    tracing::info!("Loading configuration...");
+    let config = config::Configuration::load()?;
+    tracing::info!("Configuration loaded successfully.");
+
     // --- Load the Font ---
-    tracing::info!("Loading font...");
-    let font_data = fs::read("DejaVuSansMono.ttf")?;
-    let font = FontArc::try_from_vec(font_data)?; 
+    tracing::info!("Loading font from: {:?}", config.font.path);
+    let font_data = fs::read(&config.font.path)?;
+    let font = FontArc::try_from_vec(font_data)?;
     tracing::info!("Font loaded successfully.");
 
     // --- Load Models ---
@@ -42,21 +48,23 @@ async fn main() -> anyhow::Result<()> {
         .commit()?;
     
     tracing::info!("Loading models...");
+    tracing::info!("Loading detector from: {:?}", config.models.detector_path);
     let detector_session = SessionBuilder::new()?
-        .commit_from_file("models/scrfd_10g_bnkps.onnx")?;
+        .commit_from_file(&config.models.detector_path)?;
+    tracing::info!("Loading recognizer from: {:?}", config.models.recognizer_path);
     let recognizer_session = SessionBuilder::new()?
-        .commit_from_file("models/arcface_r100.onnx")?;
+        .commit_from_file(&config.models.recognizer_path)?;
     tracing::info!("Models loaded successfully.");
 
     // --- Connect to SurrealDB ---
-    tracing::info!("Connecting to database...");
-    let db = Surreal::new::<Ws>("127.0.0.1:8000").await?;
+    tracing::info!("Connecting to database at: {}", config.database_url());
+    let db = Surreal::new::<Ws>(config.database_url()).await?;
     db.signin(Root {
-        username: "root",
-        password: "root",
+        username: &config.database.username,
+        password: &config.database.password,
     })
     .await?;
-    db.use_ns("test").use_db("test").await?;
+    db.use_ns(&config.database.namespace).use_db(&config.database.database).await?;
     tracing::info!("Database connection established.");
 
     // --- Create Application State ---
@@ -69,7 +77,9 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Run Server ---
     let app = handlers::create_router().with_state(shared_state);
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    let server_address = config.server_address();
+    tracing::info!("Binding server to: {}", server_address);
+    let listener = tokio::net::TcpListener::bind(&server_address).await?;
     tracing::info!("Server listening on {}", listener.local_addr()?);
     axum::serve(listener, app.into_make_service()).await?;
 

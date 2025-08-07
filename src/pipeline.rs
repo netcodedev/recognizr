@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::models::{DebugParams, DetectedFace, FinalResult};
+use crate::config::ModelMetadata;
 use image::{imageops, DynamicImage, GenericImageView, RgbImage, Rgba};
 use imageproc::drawing::{draw_filled_rect_mut, draw_hollow_rect_mut, draw_text_mut};
 use imageproc::rect::Rect;
@@ -8,21 +9,13 @@ use ort::{inputs, session::{Session}, value::Value};
 use ab_glyph::{FontArc, PxScale};
 use tracing::debug;
 
-// --- TUNING PARAMETERS (match these with your Python script) ---
+// --- TUNING PARAMETERS ---
 const NMS_THRESHOLD: f32 = 0.4;
-const RECOGNIZER_INPUT_SIZE: u32 = 112;
-const DETECTOR_TARGET_SHAPE: (u32, u32) = (640, 640); // (height, width)
 
 // --- COORDINATE SCALING OFFSETS ---
 // These offsets are applied during coordinate scaling to adjust for preprocessing differences
 pub const X_OFFSET: f32 = 50.0;
 pub const Y_OFFSET: f32 = 50.0;
-
-// --- MODEL OUTPUT TENSOR NAMES ---
-// Detector model output tensor names for different stride levels
-const DETECTOR_OUTPUTS_STRIDE_8: (&str, &str, &str) = ("448", "451", "454");   // (score, bbox, kps)
-const DETECTOR_OUTPUTS_STRIDE_16: (&str, &str, &str) = ("471", "474", "477");  // (score, bbox, kps)
-const DETECTOR_OUTPUTS_STRIDE_32: (&str, &str, &str) = ("494", "497", "500");  // (score, bbox, kps)
 
 // --- IMAGE PROCESSING CONSTANTS ---
 const LETTERBOX_FILL_COLOR: [u8; 3] = [114, 114, 114]; // Gray color for letterbox padding
@@ -55,18 +48,36 @@ fn preprocess_image_topleft(
     (canvas, new_w, new_h)
 }
 
-/// Takes raw image bytes, runs the detector, and returns a clean list of faces and the resize ratio.
+/// Detects faces in an image using the SCRFD model.
+///
+/// # Arguments
+/// * `session` - Mutable reference to the ONNX runtime session
+/// * `image_bytes` - Raw image data as bytes
+/// * `params` - Debug parameters for controlling detection behavior
+/// * `detector_metadata` - Pre-computed model metadata with output mappings
+///
+/// # Returns
+/// * `Ok((faces, width, height))` - List of detected faces and resized image dimensions
+/// * `Err(AppError)` - If detection fails
+///
+/// # Performance
+/// Uses pre-computed output mappings for efficient tensor extraction.
 pub fn detect_faces(
     session: &mut Session,
     image_bytes: &[u8],
     params: &DebugParams,
+    detector_metadata: &crate::config::DetectorMetadata,
 ) -> Result<(Vec<DetectedFace>, u32, u32), AppError> {
     let image = image::load_from_memory(image_bytes)?;
-    
-    let (processed_img, new_w, new_h) =
-        preprocess_image_topleft(&image, DETECTOR_TARGET_SHAPE.0, DETECTOR_TARGET_SHAPE.1);
 
-    let mut input_tensor = Array::zeros((1, 3, DETECTOR_TARGET_SHAPE.0 as usize, DETECTOR_TARGET_SHAPE.1 as usize));
+    // Extract target shape from detector metadata
+    let target_height = detector_metadata.input_shape[2] as u32;
+    let target_width = detector_metadata.input_shape[3] as u32;
+
+    let (processed_img, new_w, new_h) =
+        preprocess_image_topleft(&image, target_height, target_width);
+
+    let mut input_tensor = Array::zeros((1, 3, target_height as usize, target_width as usize));
     for (x, y, pixel) in processed_img.enumerate_pixels() {
         // Normalize pixel values: (pixel - mean) / scale, using BGR order
         input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
@@ -74,28 +85,25 @@ pub fn detect_faces(
         input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
     }
 
-    let inputs = inputs!["input.1" => Value::from_array(input_tensor)?]?;
+    let inputs = inputs![&detector_metadata.input_name => Value::from_array(input_tensor)?]?;
     let outputs = session.run(inputs)?;
     
-    let score_8 = outputs[DETECTOR_OUTPUTS_STRIDE_8.0].try_extract_tensor::<f32>()?;
-    let bbox_8 = outputs[DETECTOR_OUTPUTS_STRIDE_8.1].try_extract_tensor::<f32>()?;
-    let kps_8 = outputs[DETECTOR_OUTPUTS_STRIDE_8.2].try_extract_tensor::<f32>()?;
+    // Use pre-computed output mappings to extract tensors efficiently
+    let mut all_outputs = Vec::new();
 
-    let score_16 = outputs[DETECTOR_OUTPUTS_STRIDE_16.0].try_extract_tensor::<f32>()?;
-    let bbox_16 = outputs[DETECTOR_OUTPUTS_STRIDE_16.1].try_extract_tensor::<f32>()?;
-    let kps_16 = outputs[DETECTOR_OUTPUTS_STRIDE_16.2].try_extract_tensor::<f32>()?;
+    for (&stride, &(score_idx, bbox_idx, kps_idx)) in &detector_metadata.stride_output_mapping {
+        let score_name = &detector_metadata.output_names[score_idx];
+        let bbox_name = &detector_metadata.output_names[bbox_idx];
+        let kps_name = &detector_metadata.output_names[kps_idx];
 
-    let score_32 = outputs[DETECTOR_OUTPUTS_STRIDE_32.0].try_extract_tensor::<f32>()?;
-    let bbox_32 = outputs[DETECTOR_OUTPUTS_STRIDE_32.1].try_extract_tensor::<f32>()?;
-    let kps_32 = outputs[DETECTOR_OUTPUTS_STRIDE_32.2].try_extract_tensor::<f32>()?;
-    
-    let all_outputs = [
-        (8, score_8, bbox_8, kps_8),
-        (16, score_16, bbox_16, kps_16),
-        (32, score_32, bbox_32, kps_32),
-    ];
+        let score = outputs[score_name.as_str()].try_extract_tensor::<f32>()?;
+        let bbox = outputs[bbox_name.as_str()].try_extract_tensor::<f32>()?;
+        let kps = outputs[kps_name.as_str()].try_extract_tensor::<f32>()?;
 
-    let proposals = decode_proposals(&all_outputs, DETECTOR_TARGET_SHAPE.1 as f32, DETECTOR_TARGET_SHAPE.0 as f32, params)?;
+        all_outputs.push((stride, score, bbox, kps));
+    }
+
+    let proposals = decode_proposals(&all_outputs, target_width as f32, target_height as f32, params)?;
 
     let final_faces = non_maximum_suppression(&proposals, NMS_THRESHOLD);
 
@@ -104,7 +112,7 @@ pub fn detect_faces(
 
 /// Decodes raw model output into candidate faces.
 fn decode_proposals(
-    outputs: &[(i32, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>); 3],
+    outputs: &[(i32, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>)],
     img_width: f32,
     img_height: f32,
     params: &DebugParams,
@@ -141,10 +149,24 @@ fn decode_proposals(
                     let bbox = [anchor_cx - l, anchor_cy - t, anchor_cx + r, anchor_cy + b];
 
                     let mut decoded_kps = [[0.0; 2]; 5];
-                    for k in 0..5 {
-                        let kps_x = anchor_cx + kps_pred[k * 2] * *stride as f32;
-                        let kps_y = anchor_cy + kps_pred[k * 2 + 1] * *stride as f32;
-                        decoded_kps[k] = [kps_x, kps_y];
+                    let expected_kps_len = 10; // 5 keypoints * 2 coordinates each
+
+                    if kps_pred.len() >= expected_kps_len {
+                        for k in 0..5 {
+                            if k * 2 + 1 < kps_pred.len() {
+                                let kps_x = anchor_cx + kps_pred[k * 2] * *stride as f32;
+                                let kps_y = anchor_cy + kps_pred[k * 2 + 1] * *stride as f32;
+                                decoded_kps[k] = [kps_x, kps_y];
+                            } else {
+                                tracing::warn!("Keypoint {} index out of bounds for kps_pred len {}", k, kps_pred.len());
+                                break;
+                            }
+                        }
+                    } else {
+                        // If keypoints data is insufficient, use default values or skip
+                        tracing::warn!("Insufficient keypoints data for stride {}: expected {}, got {}",
+                                      stride, expected_kps_len, kps_pred.len());
+                        // Keep default zeros for keypoints
                     }
                     
                     proposals.push(DetectedFace { bbox, kps: decoded_kps, score });
@@ -153,6 +175,140 @@ fn decode_proposals(
         }
     }
     Ok(proposals)
+}
+
+/// Pre-computes output mappings at startup for efficient runtime inference.
+///
+/// Runs the detector model once with dummy input to determine which outputs
+/// correspond to scores, bounding boxes, and keypoints for each stride.
+/// This eliminates the need for shape analysis during every inference.
+///
+/// # Arguments
+/// * `session` - Mutable reference to the detector session
+/// * `output_names` - List of model output names
+/// * `strides` - List of detection strides (e.g., [8, 16, 32])
+/// * `target_height` - Model input height
+/// * `target_width` - Model input width
+///
+/// # Returns
+/// * `Ok(HashMap)` - Mapping from stride to (score_idx, bbox_idx, kps_idx)
+/// * `Err(AppError)` - If mapping computation fails
+pub fn match_outputs_by_shape_at_startup(
+    session: &mut Session,
+    output_names: &[String],
+    strides: &[i32],
+    target_height: u32,
+    target_width: u32,
+) -> Result<std::collections::HashMap<i32, (usize, usize, usize)>, AppError> {
+    use ndarray::Array4;
+    use ort::value::Value;
+
+    // Safety check: ensure dimensions are reasonable
+    if target_height == 0 || target_width == 0 || target_height > 10000 || target_width > 10000 {
+        return Err(AppError::BadRequest(format!(
+            "Invalid target dimensions: {}x{}", target_width, target_height
+        )));
+    }
+
+    // Create dummy input tensor
+    let input_array = Array4::<f32>::zeros((1, 3, target_height as usize, target_width as usize));
+    let input_tensor = Value::from_array(input_array)?;
+
+    // Run inference to get output shapes
+    let outputs = session.run(ort::inputs!["input.1" => input_tensor]?)?;
+
+    // Extract all outputs with their shapes
+    let mut extracted_outputs = Vec::new();
+    for output_name in output_names {
+        let tensor = outputs[output_name.as_str()].try_extract_tensor::<f32>()?;
+        let shape = tensor.shape().to_vec();
+        extracted_outputs.push((output_name.clone(), tensor, shape));
+    }
+
+    // Match outputs for each stride
+    let mut stride_output_mapping = std::collections::HashMap::new();
+
+    for &stride in strides {
+        if let Some((score_idx, bbox_idx, kps_idx)) = match_outputs_by_shape(&extracted_outputs, stride, target_height, target_width)? {
+            stride_output_mapping.insert(stride, (score_idx, bbox_idx, kps_idx));
+        } else {
+            return Err(AppError::BadRequest(format!("Could not find matching outputs for stride {}", stride)));
+        }
+    }
+
+    if stride_output_mapping.is_empty() {
+        return Err(AppError::BadRequest("No valid output mappings found for any stride".to_string()));
+    }
+
+    tracing::info!("Pre-computed output mappings for {} strides", stride_output_mapping.len());
+
+    Ok(stride_output_mapping)
+}
+
+/// Match outputs by their shapes to determine which is score, bbox, and keypoints for a given stride
+/// Returns indices into the extracted_outputs array
+fn match_outputs_by_shape(
+    extracted_outputs: &[(String, ArrayBase<ViewRepr<&f32>, Dim<IxDynImpl>>, Vec<usize>)],
+    stride: i32,
+    target_height: u32,
+    target_width: u32,
+) -> Result<Option<(usize, usize, usize)>, AppError> {
+
+    // Calculate expected number of anchors for this stride
+    // SCRFD typically uses 2 anchors per spatial location
+    let feat_h = target_height / stride as u32;
+    let feat_w = target_width / stride as u32;
+    let num_anchors_per_location = 2;
+    let expected_total_anchors = feat_h * feat_w * num_anchors_per_location;
+
+
+
+    let mut score_idx = None;
+    let mut bbox_idx = None;
+    let mut kps_idx = None;
+
+    // Look for outputs that match the expected flattened shapes for this stride
+    for (idx, (_name, _tensor, shape)) in extracted_outputs.iter().enumerate() {
+        if shape.len() == 2 {
+            let num_elements = shape[0];
+            let channels = shape[1];
+
+            // Check if this output corresponds to our stride's expected anchor count
+            if num_elements == expected_total_anchors as usize {
+                // Classify based on channel count
+                match channels {
+                    1 => {
+                        // Score output (1 channel for face/no-face)
+                        if score_idx.is_none() {
+                            score_idx = Some(idx);
+                        }
+                    },
+                    4 => {
+                        // Bbox output (4 channels for x, y, w, h)
+                        if bbox_idx.is_none() {
+                            bbox_idx = Some(idx);
+                        }
+                    },
+                    10 => {
+                        // Keypoints output (10 channels for 5 keypoints * 2 coordinates)
+                        if kps_idx.is_none() {
+                            kps_idx = Some(idx);
+                        }
+                    },
+                    _ => {
+                        // Unexpected channel count, skip
+                    }
+                }
+            }
+        }
+    }
+
+    // Return the matched indices if we found all three
+    if let (Some(score), Some(bbox), Some(kps)) = (score_idx, bbox_idx, kps_idx) {
+        Ok(Some((score, bbox, kps)))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Applies Non-Maximum Suppression to filter overlapping boxes.
@@ -201,19 +357,23 @@ pub fn get_recognition_embedding(
     session: &mut Session,
     original_image: &DynamicImage,
     face: &DetectedFace,
+    recognizer_metadata: &ModelMetadata,
 ) -> Result<Vec<f32>, AppError> {
     let (image_width, image_height) = original_image.dimensions();
     let (x, y, width, height) = face.get_safe_crop_coords(image_width, image_height);
 
     let cropped_face = original_image.crop_imm(x, y, width, height);
 
+    // Extract input size from recognizer metadata
+    let input_size = recognizer_metadata.input_shape[2] as u32; // Assuming square input
+
     let resized = cropped_face.resize_exact(
-        RECOGNIZER_INPUT_SIZE,
-        RECOGNIZER_INPUT_SIZE,
+        input_size,
+        input_size,
         image::imageops::FilterType::Triangle,
     );
 
-    let mut input_tensor = Array::zeros((1, 3, RECOGNIZER_INPUT_SIZE as usize, RECOGNIZER_INPUT_SIZE as usize));
+    let mut input_tensor = Array::zeros((1, 3, input_size as usize, input_size as usize));
     for (x, y, pixel) in resized.to_rgb8().enumerate_pixels() {
         // Normalize pixel values: (pixel - mean) / scale, using BGR order for consistency
         input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
@@ -221,10 +381,11 @@ pub fn get_recognition_embedding(
         input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
     }
 
-    let inputs = inputs!["input.1" => Value::from_array(input_tensor)?]?;
+    let inputs = inputs![&recognizer_metadata.input_name => Value::from_array(input_tensor)?]?;
     let outputs = session.run(inputs)?;
 
-    let data = outputs[0].try_extract_tensor::<f32>()?;
+    let output_name = &recognizer_metadata.output_names[0];
+    let data = outputs[output_name.as_str()].try_extract_tensor::<f32>()?;
     let mut embedding: Vec<f32> = data.iter().cloned().collect();
     
     let norm = (embedding.iter().map(|v| v.powi(2)).sum::<f32>()).sqrt();

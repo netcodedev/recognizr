@@ -13,6 +13,12 @@ use tracing::debug;
 use std::sync::Arc;
 use std::time::Instant;
 
+// --- VALIDATION CONSTANTS ---
+const MAX_IMAGE_SIZE: usize = 15 * 1024 * 1024; // 15MB
+const MAX_NAME_LENGTH: usize = 100;
+const MIN_IMAGE_DIMENSION: u32 = 32;
+const MAX_IMAGE_DIMENSION: u32 = 8192;
+
 pub fn create_router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/enroll", post(enroll_handler))
@@ -28,22 +34,36 @@ async fn enroll_handler(
 ) -> Result<StatusCode, AppError> {
     let (name, image_bytes) = parse_enroll_multipart(multipart).await?;
 
-    // Validate name is not empty
+    // Validate name
     if name.trim().is_empty() {
         return Err(AppError::BadRequest("Name cannot be empty".to_string()));
+    }
+    if name.len() > MAX_NAME_LENGTH {
+        return Err(AppError::BadRequest(format!("Name too long (max {} characters)", MAX_NAME_LENGTH)));
     }
 
     // Validate image size
     if image_bytes.is_empty() {
         return Err(AppError::BadRequest("Image data is empty".to_string()));
     }
+    if image_bytes.len() > MAX_IMAGE_SIZE {
+        return Err(AppError::BadRequest(format!("Image too large (max {} MB)", MAX_IMAGE_SIZE / (1024 * 1024))));
+    }
 
     let original_image = image::load_from_memory(&image_bytes)?;
     let (original_w, original_h) = original_image.dimensions();
 
+    // Validate image dimensions
+    if original_w < MIN_IMAGE_DIMENSION || original_h < MIN_IMAGE_DIMENSION {
+        return Err(AppError::BadRequest(format!("Image too small (min {}x{})", MIN_IMAGE_DIMENSION, MIN_IMAGE_DIMENSION)));
+    }
+    if original_w > MAX_IMAGE_DIMENSION || original_h > MAX_IMAGE_DIMENSION {
+        return Err(AppError::BadRequest(format!("Image too large (max {}x{})", MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION)));
+    }
+
     let (mut faces, new_w, new_h) = {
         let mut detector_session_guard = state.detector_session.lock().unwrap();
-        detect_faces(&mut detector_session_guard, &image_bytes, &params)?
+        detect_faces(&mut detector_session_guard, &image_bytes, &params, &state.detector_metadata)?
     };
 
     if faces.len() != 1 {
@@ -61,7 +81,7 @@ async fn enroll_handler(
 
     let embedding = {
         let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
-        get_recognition_embedding(&mut recognizer_session_guard, &original_image, face)?
+        get_recognition_embedding(&mut recognizer_session_guard, &original_image, face, &state.recognizer_metadata)?
     };
 
     let person = Person { name, embedding };
@@ -81,13 +101,24 @@ async fn recognize_handler(
     if image_bytes.is_empty() {
         return Err(AppError::BadRequest("Image data is empty".to_string()));
     }
+    if image_bytes.len() > MAX_IMAGE_SIZE {
+        return Err(AppError::BadRequest(format!("Image too large (max {} MB)", MAX_IMAGE_SIZE / (1024 * 1024))));
+    }
 
     let original_image = image::load_from_memory(&image_bytes)?;
     let (original_w, original_h) = original_image.dimensions();
 
+    // Validate image dimensions
+    if original_w < MIN_IMAGE_DIMENSION || original_h < MIN_IMAGE_DIMENSION {
+        return Err(AppError::BadRequest(format!("Image too small (min {}x{})", MIN_IMAGE_DIMENSION, MIN_IMAGE_DIMENSION)));
+    }
+    if original_w > MAX_IMAGE_DIMENSION || original_h > MAX_IMAGE_DIMENSION {
+        return Err(AppError::BadRequest(format!("Image too large (max {}x{})", MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION)));
+    }
+
     let (mut faces, new_w, new_h) = {
         let mut detector_session_guard = state.detector_session.lock().unwrap();
-        detect_faces(&mut detector_session_guard, &image_bytes, &params)?
+        detect_faces(&mut detector_session_guard, &image_bytes, &params, &state.detector_metadata)?
     };
     if faces.is_empty() {
         return Ok(Json(Vec::new()));
@@ -100,7 +131,7 @@ async fn recognize_handler(
         face.scale_to_original(scale_w, scale_h, X_OFFSET, Y_OFFSET);
         let embedding = {
             let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
-            get_recognition_embedding(&mut recognizer_session_guard, &original_image, &face)?
+            get_recognition_embedding(&mut recognizer_session_guard, &original_image, &face, &state.recognizer_metadata)?
         };
 
         let mut response = state.db
@@ -132,16 +163,27 @@ async fn debug_detector_handler(
     if image_bytes.is_empty() {
         return Err(AppError::BadRequest("Image data is empty".to_string()));
     }
+    if image_bytes.len() > MAX_IMAGE_SIZE {
+        return Err(AppError::BadRequest(format!("Image too large (max {} MB)", MAX_IMAGE_SIZE / (1024 * 1024))));
+    }
 
     let mut image = image::load_from_memory(&image_bytes)?;
     let (original_w, original_h) = image.dimensions();
+
+    // Validate image dimensions
+    if original_w < MIN_IMAGE_DIMENSION || original_h < MIN_IMAGE_DIMENSION {
+        return Err(AppError::BadRequest(format!("Image too small (min {}x{})", MIN_IMAGE_DIMENSION, MIN_IMAGE_DIMENSION)));
+    }
+    if original_w > MAX_IMAGE_DIMENSION || original_h > MAX_IMAGE_DIMENSION {
+        return Err(AppError::BadRequest(format!("Image too large (max {}x{})", MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION)));
+    }
     debug!("Image loaded in {} ms", image_load_start.elapsed().as_millis());
 
     // --- 2. Detect all faces in the image ---
     let detection_start = Instant::now();
     let (detected_faces, new_w, new_h) = {
         let mut detector_session_guard = state.detector_session.lock().unwrap();
-        detect_faces(&mut detector_session_guard, &image_bytes, &params)?
+        detect_faces(&mut detector_session_guard, &image_bytes, &params, &state.detector_metadata)?
     };
     debug!("Face detection completed in {} ms", detection_start.elapsed().as_millis());
 
@@ -200,7 +242,7 @@ async fn process_detected_face(
     let embedding_start = Instant::now();
     let embedding = {
         let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
-        get_recognition_embedding(&mut recognizer_session_guard, original_image, &face)?
+        get_recognition_embedding(&mut recognizer_session_guard, original_image, &face, &state.recognizer_metadata)?
     };
     debug!("Face embedding computed in {} ms", embedding_start.elapsed().as_millis());
 

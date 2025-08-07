@@ -14,11 +14,15 @@ mod handlers;
 mod models;
 mod pipeline;
 
+use config::{ModelMetadata, DetectorMetadata, extract_detector_metadata, extract_recognizer_metadata, create_detector_metadata_with_mappings};
+
 pub struct AppState {
     db: Surreal<Client>,
     detector_session: Mutex<Session>,
     recognizer_session: Mutex<Session>,
     font: FontArc,
+    detector_metadata: DetectorMetadata,
+    recognizer_metadata: ModelMetadata,
 }
 
 #[tokio::main]
@@ -48,16 +52,39 @@ async fn main() -> anyhow::Result<()> {
         .commit()?;
     
     tracing::info!("Loading models...");
-    tracing::info!("Loading detector from: {:?}", config.models.detector_path);
-    let detector_session = SessionBuilder::new()?
-        .commit_from_file(&config.models.detector_path)?;
-    tracing::info!("Loading recognizer from: {:?}", config.models.recognizer_path);
+    tracing::info!("Loading detector from: {:?}", config.models.detector.path);
+    let mut detector_session = SessionBuilder::new()?
+        .commit_from_file(&config.models.detector.path)?;
+    tracing::info!("Loading recognizer from: {:?}", config.models.recognizer.path);
     let recognizer_session = SessionBuilder::new()?
-        .commit_from_file(&config.models.recognizer_path)?;
+        .commit_from_file(&config.models.recognizer.path)?;
     tracing::info!("Models loaded successfully.");
 
+    // --- Extract Model Metadata ---
+    tracing::info!("Extracting model metadata...");
+    let basic_detector_metadata = extract_detector_metadata(&detector_session, &config.models.detector)?;
+    let recognizer_metadata = extract_recognizer_metadata(&recognizer_session, &config.models.recognizer)?;
+
+    // --- Pre-compute Output Mappings ---
+    tracing::info!("Pre-computing detector output mappings...");
+    let stride_output_mapping = pipeline::match_outputs_by_shape_at_startup(
+        &mut detector_session,
+        &basic_detector_metadata.output_names,
+        &config.models.detector.strides,
+        config.models.detector.input_shape[0],
+        config.models.detector.input_shape[1],
+    )?;
+
+    let detector_metadata = create_detector_metadata_with_mappings(basic_detector_metadata, stride_output_mapping);
+
+    // Check if we have the expected number of outputs for the strides
+    let expected_outputs = config.models.detector.strides.len() * 3; // 3 outputs per stride
+    if detector_metadata.output_names.len() != expected_outputs {
+        tracing::warn!("Expected {} outputs for {} strides, but got {}. This may cause issues.",
+                      expected_outputs, config.models.detector.strides.len(), detector_metadata.output_names.len());
+    }
+
     // --- Connect to SurrealDB ---
-    tracing::info!("Connecting to database at: {}", config.database_url());
     let db = Surreal::new::<Ws>(config.database_url()).await?;
     db.signin(Root {
         username: &config.database.username,
@@ -72,13 +99,14 @@ async fn main() -> anyhow::Result<()> {
         db,
         detector_session: Mutex::new(detector_session),
         recognizer_session: Mutex::new(recognizer_session),
-        font
+        font,
+        detector_metadata,
+        recognizer_metadata,
     });
 
     // --- Run Server ---
     let app = handlers::create_router().with_state(shared_state);
     let server_address = config.server_address();
-    tracing::info!("Binding server to: {}", server_address);
     let listener = tokio::net::TcpListener::bind(&server_address).await?;
     tracing::info!("Server listening on {}", listener.local_addr()?);
     axum::serve(listener, app.into_make_service()).await?;

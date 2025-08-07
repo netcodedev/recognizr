@@ -1,15 +1,15 @@
 # Recognizr Configuration File
 
 [font]
-path = "DejaVuSansMono.ttf"
+path = "assets/font/DejaVuSansMono.ttf"
 
 [models.detector]
-path = "models/scrfd_10g_bnkps.onnx"
+path = "assets/models/scrfd_10g_bnkps.onnx"
 strides = [8, 16, 32]
 input_shape = [640, 640]  # [height, width] - automatically detects outputs by shape
 
 [models.recognizer]
-path = "models/arcface_r100.onnx"
+path = "assets/models/arcface_r100.onnx"
 input_size = 112
 
 [database]

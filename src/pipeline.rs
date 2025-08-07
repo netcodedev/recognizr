@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use crate::models::{DebugParams, DetectedFace, FinalResult};
-use image::{imageops, DynamicImage, RgbImage, Rgba};
+use image::{imageops, DynamicImage, GenericImageView, RgbImage, Rgba};
 use imageproc::drawing::{draw_filled_rect_mut, draw_hollow_rect_mut, draw_text_mut};
 use imageproc::rect::Rect;
 use ndarray::{s, Array, ArrayBase, Dim, IxDynImpl, ViewRepr};
@@ -12,6 +12,22 @@ use tracing::debug;
 const NMS_THRESHOLD: f32 = 0.4;
 const RECOGNIZER_INPUT_SIZE: u32 = 112;
 const DETECTOR_TARGET_SHAPE: (u32, u32) = (640, 640); // (height, width)
+
+// --- COORDINATE SCALING OFFSETS ---
+// These offsets are applied during coordinate scaling to adjust for preprocessing differences
+pub const X_OFFSET: f32 = 50.0;
+pub const Y_OFFSET: f32 = 50.0;
+
+// --- MODEL OUTPUT TENSOR NAMES ---
+// Detector model output tensor names for different stride levels
+const DETECTOR_OUTPUTS_STRIDE_8: (&str, &str, &str) = ("448", "451", "454");   // (score, bbox, kps)
+const DETECTOR_OUTPUTS_STRIDE_16: (&str, &str, &str) = ("471", "474", "477");  // (score, bbox, kps)
+const DETECTOR_OUTPUTS_STRIDE_32: (&str, &str, &str) = ("494", "497", "500");  // (score, bbox, kps)
+
+// --- IMAGE PROCESSING CONSTANTS ---
+const LETTERBOX_FILL_COLOR: [u8; 3] = [114, 114, 114]; // Gray color for letterbox padding
+const NORMALIZATION_MEAN: f32 = 127.5;
+const NORMALIZATION_SCALE: f32 = 127.5;
 
 /// Preprocesses an image using the "top-left" letterbox method.
 /// A direct Rust translation of the Python `preprocess_image_topleft` function.
@@ -33,7 +49,7 @@ fn preprocess_image_topleft(
 
     let rgb_img = img.to_rgb8();
     let resized_img = imageops::resize(&rgb_img, new_w, new_h, imageops::FilterType::Triangle);
-    let mut canvas = RgbImage::from_pixel(target_width, target_height, image::Rgb([114, 114, 114]));
+    let mut canvas = RgbImage::from_pixel(target_width, target_height, image::Rgb(LETTERBOX_FILL_COLOR));
     imageops::overlay(&mut canvas, &resized_img, 0, 0);
 
     (canvas, new_w, new_h)
@@ -52,25 +68,26 @@ pub fn detect_faces(
 
     let mut input_tensor = Array::zeros((1, 3, DETECTOR_TARGET_SHAPE.0 as usize, DETECTOR_TARGET_SHAPE.1 as usize));
     for (x, y, pixel) in processed_img.enumerate_pixels() {
-        input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - 127.5) / 127.5;
-        input_tensor[[0, 1, y as usize, x as usize]] = (pixel[1] as f32 - 127.5) / 127.5;
-        input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - 127.5) / 127.5;
+        // Normalize pixel values: (pixel - mean) / scale, using BGR order
+        input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
+        input_tensor[[0, 1, y as usize, x as usize]] = (pixel[1] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
+        input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
     }
 
     let inputs = inputs!["input.1" => Value::from_array(input_tensor)?]?;
     let outputs = session.run(inputs)?;
     
-    let score_8 = outputs["448"].try_extract_tensor::<f32>()?;
-    let bbox_8 = outputs["451"].try_extract_tensor::<f32>()?;
-    let kps_8 = outputs["454"].try_extract_tensor::<f32>()?;
+    let score_8 = outputs[DETECTOR_OUTPUTS_STRIDE_8.0].try_extract_tensor::<f32>()?;
+    let bbox_8 = outputs[DETECTOR_OUTPUTS_STRIDE_8.1].try_extract_tensor::<f32>()?;
+    let kps_8 = outputs[DETECTOR_OUTPUTS_STRIDE_8.2].try_extract_tensor::<f32>()?;
 
-    let score_16 = outputs["471"].try_extract_tensor::<f32>()?;
-    let bbox_16 = outputs["474"].try_extract_tensor::<f32>()?;
-    let kps_16 = outputs["477"].try_extract_tensor::<f32>()?;
+    let score_16 = outputs[DETECTOR_OUTPUTS_STRIDE_16.0].try_extract_tensor::<f32>()?;
+    let bbox_16 = outputs[DETECTOR_OUTPUTS_STRIDE_16.1].try_extract_tensor::<f32>()?;
+    let kps_16 = outputs[DETECTOR_OUTPUTS_STRIDE_16.2].try_extract_tensor::<f32>()?;
 
-    let score_32 = outputs["494"].try_extract_tensor::<f32>()?;
-    let bbox_32 = outputs["497"].try_extract_tensor::<f32>()?;
-    let kps_32 = outputs["500"].try_extract_tensor::<f32>()?;
+    let score_32 = outputs[DETECTOR_OUTPUTS_STRIDE_32.0].try_extract_tensor::<f32>()?;
+    let bbox_32 = outputs[DETECTOR_OUTPUTS_STRIDE_32.1].try_extract_tensor::<f32>()?;
+    let kps_32 = outputs[DETECTOR_OUTPUTS_STRIDE_32.2].try_extract_tensor::<f32>()?;
     
     let all_outputs = [
         (8, score_8, bbox_8, kps_8),
@@ -185,12 +202,10 @@ pub fn get_recognition_embedding(
     original_image: &DynamicImage,
     face: &DetectedFace,
 ) -> Result<Vec<f32>, AppError> {
-    let cropped_face = original_image.crop_imm(
-        face.bbox[0].round() as u32,
-        face.bbox[1].round() as u32,
-        (face.bbox[2] - face.bbox[0]).round().max(0.0) as u32,
-        (face.bbox[3] - face.bbox[1]).round().max(0.0) as u32,
-    );
+    let (image_width, image_height) = original_image.dimensions();
+    let (x, y, width, height) = face.get_safe_crop_coords(image_width, image_height);
+
+    let cropped_face = original_image.crop_imm(x, y, width, height);
 
     let resized = cropped_face.resize_exact(
         RECOGNIZER_INPUT_SIZE,
@@ -200,10 +215,10 @@ pub fn get_recognition_embedding(
 
     let mut input_tensor = Array::zeros((1, 3, RECOGNIZER_INPUT_SIZE as usize, RECOGNIZER_INPUT_SIZE as usize));
     for (x, y, pixel) in resized.to_rgb8().enumerate_pixels() {
-        // Use BGR order for consistency
-        input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - 127.5) / 127.5;
-        input_tensor[[0, 1, y as usize, x as usize]] = (pixel[1] as f32 - 127.5) / 127.5;
-        input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - 127.5) / 127.5;
+        // Normalize pixel values: (pixel - mean) / scale, using BGR order for consistency
+        input_tensor[[0, 0, y as usize, x as usize]] = (pixel[2] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
+        input_tensor[[0, 1, y as usize, x as usize]] = (pixel[1] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
+        input_tensor[[0, 2, y as usize, x as usize]] = (pixel[0] as f32 - NORMALIZATION_MEAN) / NORMALIZATION_SCALE;
     }
 
     let inputs = inputs!["input.1" => Value::from_array(input_tensor)?]?;

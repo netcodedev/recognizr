@@ -406,9 +406,10 @@ pub fn draw_detections(
 
     const THICKNESS: u32 = 3;
     // const DOT_RADIUS: i32 = 8;
-    let box_color = Rgba([0u8, 0u8, 255u8, 255u8]);     // Blue
+    let blue_color = Rgba([0u8, 0u8, 255u8, 255u8]);     // Blue for known people
+    let red_color = Rgba([255u8, 0u8, 0u8, 255u8]);      // Red for unknown people
     // let dot_color = Rgba([255u8, 0u8, 0u8, 255u8]);     // Red
-    let text_color = Rgba([255u8, 255u8, 255u8, 255u8]); // White (better contrast on blue)
+    let text_color = Rgba([255u8, 255u8, 255u8, 255u8]); // White (better contrast)
 
     for result in results {
         let face = &result.detection;
@@ -417,8 +418,23 @@ pub fn draw_detections(
         let x2 = face.bbox[2].round() as i32;
         let y2 = face.bbox[3].round() as i32;
         let width = (x2 - x1) as u32;
-        
-        // Draw Bounding Box (unchanged)
+
+        // Determine if this is a known or unknown person
+        let (is_known, name, similarity_score) = match &result.recognition {
+            Some((name, score)) => {
+                if *score > 0.4 { // Only consider known if similarity is decent
+                    (true, name.clone(), Some(*score))
+                } else {
+                    (false, "Unknown".to_string(), Some(*score))
+                }
+            },
+            None => (false, "Unknown".to_string(), None),
+        };
+
+        // Choose box color based on recognition status
+        let box_color = if is_known { blue_color } else { red_color };
+
+        // Draw Bounding Box with appropriate color
         for i in 0..THICKNESS {
             let rect = Rect::at(x1 + i as i32, y1 + i as i32)
                 .of_size(width.saturating_sub(i * 2), (y2 - y1).saturating_sub(i as i32 * 2) as u32);
@@ -431,34 +447,36 @@ pub fn draw_detections(
         //     draw_filled_circle_mut(image, center, DOT_RADIUS, dot_color);
         // }
 
-        // --- NEW: Draw Text Label with Background ---
-        let text = match &result.recognition {
-            Some((name, score)) => {
-                if *score > 0.4 { // Only show label if similarity is decent
-                    name.to_string()
-                } else {
-                    "Unknown".to_string()
-                }
-            },
-            None => "Unknown".to_string(),
-        };
-
+        // --- Draw Text Label with Background and Similarity Score ---
         let font_scale = PxScale::from(32.0);
-        
-        // 1. Calculate the height of the text to size the background box
-        let text_height = 32;
+
+        // Calculate the height of the text to size the background box
+        // Account for potential two lines (name + score)
+        let text_height = if similarity_score.is_some() { 64 } else { 32 }; // Double height for two lines
         let text_padding = 5; // Add some padding around the text
 
-        // 2. Define the filled rectangle for the background
+        // Define the filled rectangle for the background
         let label_box_height = text_height + (text_padding * 2);
         let label_box_rect = Rect::at(x1, y2)
             .of_size(width, label_box_height);
 
-        // 3. Draw the filled background box
+        // Draw the filled background box with same color as bounding box
         draw_filled_rect_mut(image, label_box_rect, box_color);
-        
-        // 4. Position and draw the text on top of the background
-        let text_position = (x1 + text_padding as i32, y2 + text_padding as i32);
-        draw_text_mut(image, text_color, text_position.0, text_position.1, font_scale, font, &text);
+
+        // Position and draw the text on top of the background
+        if let Some(score) = similarity_score {
+            // Draw name on first line
+            let name_position = (x1 + text_padding as i32, y2 + text_padding as i32);
+            draw_text_mut(image, text_color, name_position.0, name_position.1, font_scale, font, &name);
+
+            // Draw similarity score on second line
+            let score_text = format!("{:.3}", score);
+            let score_position = (x1 + text_padding as i32, y2 + text_padding as i32 + 32);
+            draw_text_mut(image, text_color, score_position.0, score_position.1, font_scale, font, &score_text);
+        } else {
+            // Draw just the name
+            let text_position = (x1 + text_padding as i32, y2 + text_padding as i32);
+            draw_text_mut(image, text_color, text_position.0, text_position.1, font_scale, font, &name);
+        }
     }
 }

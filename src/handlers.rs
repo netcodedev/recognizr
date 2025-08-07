@@ -140,8 +140,17 @@ async fn recognize_handler(
             .await?;
 
         if let Some(mut db_res) = response.take::<Option<RecognitionResult>>(0)? {
+            if db_res.similarity < 0.45 {
+                db_res.name = "Unknown".to_string();
+            }
             db_res.bbox = Some(face.bbox);
             results.push(db_res);
+        } else {
+            results.push(RecognitionResult {
+                name: "Unknown".to_string(),
+                similarity: 0.0,
+                bbox: Some(face.bbox),
+            });
         }
     }
 

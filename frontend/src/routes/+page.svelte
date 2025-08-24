@@ -17,7 +17,6 @@
 
 	// Recognize form state
 	let recognizeFile: File | null = null;
-	let recognizeFileInput: HTMLInputElement;
 	let recognitionResults: RecognitionResult[] = [];
 	let recognizeImageUrl = '';
 	let imageElement: HTMLImageElement;
@@ -89,30 +88,6 @@
 	// Load gallery when gallery tab is selected
 	$: if (activeTab === 'gallery') {
 		loadGallery();
-	}
-
-	// Test function to simulate recognition results (for development/testing)
-	function addTestResults() {
-		if (!recognizeImageUrl || !imageElement) return;
-
-		// Simulate some test results with different confidence levels
-		recognitionResults = [
-			{
-				name: "John Doe",
-				similarity: 0.85, // High confidence
-				bbox: [100, 50, 200, 180] // [x1, y1, x2, y2]
-			},
-			{
-				name: "Jane Smith",
-				similarity: 0.45, // Medium confidence
-				bbox: [300, 80, 400, 210]
-			},
-			{
-				name: "Unknown",
-				similarity: 0.15, // Low confidence
-				bbox: [150, 250, 250, 380]
-			}
-		];
 	}
 
 	// Function to handle face click for naming
@@ -315,37 +290,37 @@
 	<meta name="description" content="Face recognition application using the Recognizr API" />
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50">
+<div class="min-h-screen">
 	<!-- Header -->
-	<header class="bg-white shadow-sm border-b">
+	<header class="cyber-border border-b-2 border-cyan-400/30">
 		<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 			<div class="flex justify-between items-center py-6">
 				<div class="flex items-center">
-					<h1 class="text-3xl font-bold text-gray-900">Recognizr</h1>
-					<span class="ml-3 text-sm text-gray-500">Face Recognition App</span>
+					<h1 class="text-4xl font-bold gradient-text">RECOGNIZR</h1>
+					<span class="ml-4 text-sm text-cyan-300 font-mono">// NEURAL FACE RECOGNITION</span>
 				</div>
 				<div class="flex items-center space-x-4">
-					<div class="text-sm text-gray-500">
+					<div class="text-sm text-cyan-400 font-mono">
 						API: {API_BASE}
 					</div>
 					<div class="flex items-center space-x-2">
 						{#if apiStatus === 'checking'}
-							<div class="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-							<span class="text-sm text-yellow-600">Checking...</span>
+							<div class="w-3 h-3 bg-yellow-400 rounded-full animate-pulse cyber-glow"></div>
+							<span class="text-sm text-yellow-400 font-mono">SCANNING...</span>
 						{:else if apiStatus === 'connected'}
-							<div class="w-2 h-2 bg-green-400 rounded-full"></div>
-							<span class="text-sm text-green-600">Connected</span>
+							<div class="w-3 h-3 bg-green-400 rounded-full cyber-glow"></div>
+							<span class="text-sm text-green-400 font-mono">ONLINE</span>
 							{#if apiInfo}
-								<span class="text-xs text-gray-400">v{apiInfo.version}</span>
+								<span class="text-xs text-cyan-300 font-mono">v{apiInfo.version}</span>
 							{/if}
 						{:else}
-							<div class="w-2 h-2 bg-red-400 rounded-full"></div>
-							<span class="text-sm text-red-600">Disconnected</span>
+							<div class="w-3 h-3 bg-red-400 rounded-full cyber-glow-pink"></div>
+							<span class="text-sm text-red-400 font-mono">OFFLINE</span>
 							<button
 								on:click={checkApiStatus}
-								class="text-xs text-blue-600 hover:text-blue-800 underline"
+								class="text-xs text-cyan-400 hover:text-pink-400 underline font-mono transition-colors"
 							>
-								Retry
+								RETRY
 							</button>
 						{/if}
 					</div>
@@ -358,8 +333,8 @@
 	<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 		<!-- Message Display -->
 		{#if message}
-			<div class="mb-6 p-4 rounded-md {messageType === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : messageType === 'error' ? 'bg-red-50 text-red-800 border border-red-200' : 'bg-blue-50 text-blue-800 border border-blue-200'}">
-				{message}
+			<div class="mb-6 p-4 rounded-lg cyber-card {messageType === 'success' ? 'border-green-400 text-green-400' : messageType === 'error' ? 'border-red-400 text-red-400' : 'border-cyan-400 text-cyan-400'} font-mono">
+				<span class="text-xs opacity-70">[{messageType.toUpperCase()}]</span> {message}
 			</div>
 		{/if}
 
@@ -367,61 +342,61 @@
 		<div class="mb-8">
 			<nav class="flex space-x-8" aria-label="Tabs">
 				<button
-					class="py-2 px-1 border-b-2 font-medium text-sm {activeTab === 'enroll' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}"
+					class="py-3 px-4 border-b-2 font-mono text-sm transition-all duration-300 {activeTab === 'enroll' ? 'border-cyan-400 text-cyan-400 cyber-glow' : 'border-transparent text-gray-400 hover:text-cyan-300 hover:border-cyan-500/50'}"
 					on:click={() => activeTab = 'enroll'}
 				>
-					Enroll Person
+					// ENROLL
 				</button>
 				<button
-					class="py-2 px-1 border-b-2 font-medium text-sm {activeTab === 'recognize' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}"
+					class="py-3 px-4 border-b-2 font-mono text-sm transition-all duration-300 {activeTab === 'recognize' ? 'border-pink-400 text-pink-400 cyber-glow-pink' : 'border-transparent text-gray-400 hover:text-pink-300 hover:border-pink-500/50'}"
 					on:click={() => activeTab = 'recognize'}
 				>
-					Recognize Faces
+					// RECOGNIZE
 				</button>
 				<button
-					class="py-2 px-1 border-b-2 font-medium text-sm {activeTab === 'gallery' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}"
+					class="py-3 px-4 border-b-2 font-mono text-sm transition-all duration-300 {activeTab === 'gallery' ? 'border-purple-400 text-purple-400 cyber-glow-purple' : 'border-transparent text-gray-400 hover:text-purple-300 hover:border-purple-500/50'}"
 					on:click={() => activeTab = 'gallery'}
 				>
-					Gallery
+					// GALLERY
 				</button>
 				<button
-					class="py-2 px-1 border-b-2 font-medium text-sm {activeTab === 'debug' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}"
+					class="py-3 px-4 border-b-2 font-mono text-sm transition-all duration-300 {activeTab === 'debug' ? 'border-yellow-400 text-yellow-400' : 'border-transparent text-gray-400 hover:text-yellow-300 hover:border-yellow-500/50'}"
 					on:click={() => activeTab = 'debug'}
 				>
-					Debug Detection
+					// DEBUG
 				</button>
 			</nav>
 		</div>
 
 		<!-- Tab Content -->
-		<div class="bg-white shadow rounded-lg">
+		<div class="bg-gray-900 rounded-lg border border-cyan-400/20">
 			<!-- Enroll Tab -->
 			{#if activeTab === 'enroll'}
-				<div class="p-6">
-					<h2 class="text-lg font-medium text-gray-900 mb-4">Enroll a New Person</h2>
-					<p class="text-sm text-gray-600 mb-6">
-						Upload an image containing exactly one face and provide a name to enroll this person in the system.
+				<div class="p-8">
+					<h2 class="text-xl font-bold text-cyan-400 mb-4 font-mono">// NEURAL ENROLLMENT PROTOCOL</h2>
+					<p class="text-sm text-cyan-300 mb-8 font-mono opacity-80">
+						> Upload biometric data containing exactly one facial pattern for neural network training
 					</p>
 
-					<form on:submit|preventDefault={handleEnroll} class="space-y-6">
+					<form on:submit|preventDefault={handleEnroll} class="space-y-8">
 						<div>
-							<label for="enrollName" class="block text-sm font-medium text-gray-700">
-								Person's Name
+							<label for="enrollName" class="block text-sm font-mono text-cyan-400 mb-2">
+								> SUBJECT_ID
 							</label>
 							<input
 								id="enrollName"
 								type="text"
 								bind:value={enrollName}
-								placeholder="Enter the person's name"
-								class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+								placeholder="Enter subject identifier..."
+								class="cyber-input mt-1 block w-full rounded-md font-mono placeholder-cyan-600"
 								required
 								maxlength="100"
 							/>
 						</div>
 
 						<div>
-							<label for="enrollImage" class="block text-sm font-medium text-gray-700">
-								Image File
+							<label for="enrollImage" class="block text-sm font-mono text-cyan-400 mb-2">
+								> BIOMETRIC_DATA
 							</label>
 							<input
 								id="enrollImage"
@@ -429,27 +404,27 @@
 								accept="image/*"
 								bind:this={enrollFileInput}
 								on:change={(e) => handleFileSelect(e, 'enroll')}
-								class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+								class="cyber-input mt-1 block rounded-md w-full text-sm font-mono file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-mono file:bg-cyan-900/50 file:text-cyan-400 hover:file:bg-cyan-800/50 file:cyber-glow"
 								required
 							/>
-							<p class="mt-1 text-xs text-gray-500">
-								Supported formats: JPG, PNG, WebP. Max size: 15MB.
+							<p class="mt-2 text-xs text-cyan-500 font-mono opacity-70">
+								// Supported: JPG, PNG, WebP | Max: 15MB
 							</p>
 						</div>
 
 						<button
 							type="submit"
 							disabled={isLoading}
-							class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+							class="cyber-button w-full flex justify-center py-4 px-6 rounded-md text-sm font-mono text-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed"
 						>
 							{#if isLoading}
-								<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+								<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
 									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 									<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 								</svg>
-								Enrolling...
+								> PROCESSING...
 							{:else}
-								Enroll Person
+								> INITIATE_ENROLLMENT
 							{/if}
 						</button>
 					</form>
@@ -458,67 +433,55 @@
 
 			<!-- Recognize Tab -->
 			{#if activeTab === 'recognize'}
-				<div class="p-6">
-					<h2 class="text-lg font-medium text-gray-900 mb-4">Recognize Faces</h2>
-					<p class="text-sm text-gray-600 mb-6">
-						Upload an image to identify all known faces in it.
+				<div class="p-8">
+					<h2 class="text-xl font-bold text-pink-400 mb-4 font-mono">// FACIAL RECOGNITION SCANNER</h2>
+					<p class="text-sm text-pink-300 mb-8 font-mono opacity-80">
+						> Analyze biometric patterns and match against neural database
 					</p>
 
-					<form on:submit|preventDefault={handleRecognize} class="space-y-6">
+					<form on:submit|preventDefault={handleRecognize} class="space-y-8">
 						<div>
-							<label for="recognizeImage" class="block text-sm font-medium text-gray-700">
-								Image File
+							<label for="recognizeImage" class="block text-sm font-mono text-pink-400 mb-2">
+								> SCAN_TARGET
 							</label>
 							<input
 								id="recognizeImage"
 								type="file"
 								accept="image/*"
-								bind:this={recognizeFileInput}
 								on:change={(e) => handleFileSelect(e, 'recognize')}
-								class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+								class="cyber-input rounded-md mt-1 block w-full text-sm font-mono file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-mono file:bg-pink-900/50 file:text-pink-400 hover:file:bg-pink-800/50 file:cyber-glow-pink"
 								required
 							/>
-							<p class="mt-1 text-xs text-gray-500">
-								Supported formats: JPG, PNG, WebP. Max size: 15MB.
+							<p class="mt-2 text-xs text-pink-500 font-mono opacity-70">
+								// Multi-face detection enabled | Max: 15MB
 							</p>
 						</div>
 
-						<div class="space-y-3">
+						<div class="space-y-4">
 							<button
 								type="submit"
 								disabled={isLoading}
-								class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
+								class="cyber-button w-full flex justify-center py-4 px-6 rounded-md text-sm font-mono text-pink-400 disabled:opacity-50 disabled:cursor-not-allowed"
 							>
 								{#if isLoading}
-									<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+									<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-pink-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
 										<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 										<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 									</svg>
-									Recognizing...
+									> SCANNING...
 								{:else}
-									Recognize Faces
+									> INITIATE_SCAN
 								{/if}
 							</button>
-
-							<!-- Test button for development -->
-							{#if recognizeImageUrl && imageLoaded}
-								<button
-									type="button"
-									on:click={addTestResults}
-									class="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-								>
-									Add Test Results (Demo)
-								</button>
-							{/if}
 
 							<!-- Name unknown faces button -->
 							{#if recognitionResults.length > 0}
 								<button
 									type="button"
 									on:click={() => isNamingMode = !isNamingMode}
-									class="w-full flex justify-center py-2 px-4 border border-blue-300 rounded-md shadow-sm text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+									class="cyber-button w-full flex justify-center py-3 px-4 rounded-md text-sm font-mono text-purple-400 border-purple-400/30"
 								>
-									{isNamingMode ? 'Cancel Naming Mode' : 'Name Unknown Faces'}
+									{isNamingMode ? '> CANCEL_NAMING' : '> NAME_UNKNOWNS'}
 								</button>
 							{/if}
 						</div>
@@ -557,8 +520,9 @@
 											{@const percentage = similarityToPercentage(result.similarity)}
 
 											<!-- Bounding Box -->
+											<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 											<div
-												class="absolute border-2 {result.name === 'Unknown' ? 'border-gray-400' : percentage >= 75 ? 'border-green-400' : percentage >= 50 ? 'border-yellow-400' : 'border-red-400'} {isNamingMode && result.name === 'Unknown' ? 'cursor-pointer hover:border-blue-500 hover:bg-blue-100 hover:bg-opacity-20' : ''}"
+												class="absolute border-2 transition-all duration-300 {result.name === 'Unknown' ? 'border-gray-400 shadow-lg shadow-gray-400/20' : percentage >= 75 ? 'border-green-400 shadow-lg shadow-green-400/30 cyber-glow' : percentage >= 50 ? 'border-yellow-400 shadow-lg shadow-yellow-400/30' : 'border-red-400 shadow-lg shadow-red-400/30'} {isNamingMode && result.name === 'Unknown' ? 'cursor-pointer hover:border-cyan-400 hover:shadow-cyan-400/40 hover:bg-cyan-400/10' : ''}"
 												style="left: {x1}px; top: {y1}px; width: {width}px; height: {height}px;"
 												role={isNamingMode && result.name === 'Unknown' ? 'button' : undefined}
 												tabindex={isNamingMode && result.name === 'Unknown' ? 0 : -1}
@@ -569,13 +533,13 @@
 
 											<!-- Label -->
 											<div
-												class="absolute px-2 py-1 text-xs font-medium text-white rounded shadow-lg {result.name === 'Unknown' ? 'bg-gray-600' : percentage >= 75 ? 'bg-green-600' : percentage >= 50 ? 'bg-yellow-600' : 'bg-red-600'}"
-												style="left: {x1}px; top: {Math.max(0, y1 - 28)}px;"
+												class="absolute px-3 py-2 text-xs font-mono font-bold text-black rounded-md backdrop-blur-sm border transition-all duration-300 {result.name === 'Unknown' ? 'bg-gray-400/90 border-gray-400' : percentage >= 75 ? 'bg-green-400/90 border-green-400 cyber-glow' : percentage >= 50 ? 'bg-yellow-400/90 border-yellow-400' : 'bg-red-400/90 border-red-400'}"
+												style="left: {x1}px; top: {Math.max(0, y1 - 36)}px;"
 											>
 												<div class="whitespace-nowrap">
-													{result.name}
+													{result.name.toUpperCase()}
 													{#if result.name !== 'Unknown'}
-														<span class="ml-1 opacity-90">({percentage.toFixed(0)}%)</span>
+														<span class="ml-1 opacity-80">({percentage.toFixed(0)}%)</span>
 													{/if}
 												</div>
 											</div>
@@ -586,29 +550,29 @@
 
 							<!-- Results Summary -->
 							{#if recognitionResults.length > 0}
-								<div class="mt-6 bg-gray-50 rounded-lg p-4">
-									<h4 class="font-medium text-gray-900 mb-3">Detection Summary</h4>
-									<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+								<div class="mt-8 cyber-card rounded-lg p-6">
+									<h4 class="font-bold text-pink-400 mb-6 font-mono">// DETECTION_ANALYSIS</h4>
+									<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 										{#each recognitionResults as result, index}
 											{@const percentage = similarityToPercentage(result.similarity)}
-											<div class="bg-white rounded p-3 border">
-												<div class="flex items-center justify-between">
-													<span class="font-medium text-sm">Face #{index + 1}</span>
+											<div class="cyber-border rounded-lg p-4 bg-black/20">
+												<div class="flex items-center justify-between mb-3">
+													<span class="font-mono text-sm text-pink-300">TARGET_{index + 1}</span>
 													{#if result.name === 'Unknown'}
-														<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-															Unknown
+														<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-mono bg-gray-700/50 text-gray-400 border border-gray-600/30">
+															UNKNOWN
 														</span>
 													{:else}
-														<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium {percentage >= 75 ? 'bg-green-100 text-green-800' : percentage >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}">
-															{percentage >= 75 ? 'High' : percentage >= 50 ? 'Medium' : 'Low'}
+														<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-mono border {percentage >= 75 ? 'bg-green-900/50 text-green-400 border-green-500/30' : percentage >= 50 ? 'bg-yellow-900/50 text-yellow-400 border-yellow-500/30' : 'bg-red-900/50 text-red-400 border-red-500/30'}">
+															{percentage >= 75 ? 'HIGH' : percentage >= 50 ? 'MED' : 'LOW'}
 														</span>
 													{/if}
 												</div>
-												<div class="mt-1">
-													<p class="text-sm text-gray-900">{result.name}</p>
+												<div class="space-y-1">
+													<p class="text-sm font-mono text-pink-200">{result.name.toUpperCase()}</p>
 													{#if result.name !== 'Unknown'}
-														<p class="text-xs text-gray-500">Confidence: {percentage.toFixed(1)}%</p>
-														<p class="text-xs text-gray-400">Raw score: {result.similarity.toFixed(3)}</p>
+														<p class="text-xs font-mono text-pink-400/70">CONF: {percentage.toFixed(1)}%</p>
+														<p class="text-xs font-mono text-pink-500/50">RAW: {result.similarity.toFixed(3)}</p>
 													{/if}
 												</div>
 											</div>
@@ -623,60 +587,61 @@
 
 			<!-- Gallery Tab -->
 			{#if activeTab === 'gallery'}
-				<div class="p-6">
-					<h2 class="text-lg font-medium text-gray-900 mb-4">Enrolled People Gallery</h2>
-					<p class="text-sm text-gray-600 mb-6">
-						View all people enrolled in the face recognition system.
+				<div class="p-8">
+					<h2 class="text-xl font-bold text-purple-400 mb-4 font-mono">// NEURAL DATABASE ARCHIVE</h2>
+					<p class="text-sm text-purple-300 mb-8 font-mono opacity-80">
+						> Displaying all registered biometric patterns in the system
 					</p>
 
 					{#if isLoading}
-						<div class="flex justify-center items-center py-12">
-							<svg class="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+						<div class="flex justify-center items-center py-16">
+							<svg class="animate-spin h-10 w-10 text-purple-400 cyber-glow-purple" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
 								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 								<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 							</svg>
-							<span class="ml-3 text-gray-600">Loading gallery...</span>
+							<span class="ml-4 text-purple-400 font-mono">ACCESSING DATABASE...</span>
 						</div>
 					{:else if galleryPeople.length === 0}
-						<div class="text-center py-12">
-							<div class="mx-auto h-12 w-12 text-gray-400">
-								<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+						<div class="text-center py-16">
+							<div class="mx-auto h-16 w-16 text-purple-400/50 cyber-glow-purple">
+								<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
 								</svg>
 							</div>
-							<h3 class="mt-2 text-sm font-medium text-gray-900">No people enrolled</h3>
-							<p class="mt-1 text-sm text-gray-500">Get started by enrolling someone in the "Enroll Person" tab.</p>
+							<h3 class="mt-4 text-lg font-mono text-purple-400">DATABASE_EMPTY</h3>
+							<p class="mt-2 text-sm text-purple-300 font-mono opacity-70">// No biometric patterns found. Initialize enrollment protocol.</p>
 						</div>
 					{:else}
-						<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+						<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
 							{#each galleryPeople as person}
-								<div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
-									<div class="aspect-square">
+								<div class="cyber-card rounded-lg overflow-hidden hover:cyber-glow-purple transition-all duration-300 transform hover:scale-105">
+									<div class="aspect-square relative">
 										<img
 											src="data:image/jpeg;base64,{person.image_base64}"
 											alt="{person.name}"
 											class="w-full h-full object-cover"
 										/>
+										<div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
 									</div>
-									<div class="p-3">
-										<h3 class="text-sm font-medium text-gray-900 truncate" title="{person.name}">
-											{person.name}
+									<div class="p-4 bg-gradient-to-r from-purple-900/20 to-cyan-900/20">
+										<h3 class="text-sm font-mono text-purple-300 truncate" title="{person.name}">
+											> {person.name.toUpperCase()}
 										</h3>
 									</div>
 								</div>
 							{/each}
 						</div>
 
-						<div class="mt-6 text-center">
-							<p class="text-sm text-gray-500">
-								{galleryPeople.length} {galleryPeople.length === 1 ? 'person' : 'people'} enrolled
+						<div class="mt-8 text-center">
+							<p class="text-sm text-purple-400 font-mono">
+								// {galleryPeople.length} PATTERN{galleryPeople.length === 1 ? '' : 'S'}_REGISTERED
 							</p>
 							<button
 								type="button"
 								on:click={() => { galleryLoaded = false; loadGallery(); }}
-								class="mt-2 text-sm text-blue-600 hover:text-blue-500"
+								class="cyber-button mt-4 px-6 py-2 text-sm font-mono text-purple-400 border-purple-400/30"
 							>
-								Refresh Gallery
+								> REFRESH_DATABASE
 							</button>
 						</div>
 					{/if}
@@ -685,16 +650,16 @@
 
 			<!-- Debug Tab -->
 			{#if activeTab === 'debug'}
-				<div class="p-6">
-					<h2 class="text-lg font-medium text-gray-900 mb-4">Debug Face Detection</h2>
-					<p class="text-sm text-gray-600 mb-6">
-						Upload an image to see the face detection pipeline in action with visual annotations.
+				<div class="p-8">
+					<h2 class="text-xl font-bold text-yellow-400 mb-4 font-mono">// DETECTION PIPELINE DEBUG</h2>
+					<p class="text-sm text-yellow-300 mb-8 font-mono opacity-80">
+						> Visualize neural network detection layers with confidence annotations
 					</p>
 
-					<form on:submit|preventDefault={handleDebug} class="space-y-6">
+					<form on:submit|preventDefault={handleDebug} class="space-y-8">
 						<div>
-							<label for="debugThreshold" class="block text-sm font-medium text-gray-700">
-								Detection Threshold
+							<label for="debugThreshold" class="block text-sm font-mono text-yellow-400 mb-2">
+								> CONFIDENCE_THRESHOLD
 							</label>
 							<input
 								id="debugThreshold"
@@ -703,16 +668,16 @@
 								min="0.1"
 								max="1.0"
 								step="0.1"
-								class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+								class="cyber-input mt-1 block w-full rounded-md font-mono"
 							/>
-							<p class="mt-1 text-xs text-gray-500">
-								Higher values = more strict detection (0.1 - 1.0)
+							<p class="mt-2 text-xs text-yellow-500 font-mono opacity-70">
+								// Higher values = stricter detection (0.1 - 1.0)
 							</p>
 						</div>
 
 						<div>
-							<label for="debugImage" class="block text-sm font-medium text-gray-700">
-								Image File
+							<label for="debugImage" class="block text-sm font-mono text-yellow-400 mb-2">
+								> DEBUG_TARGET
 							</label>
 							<input
 								id="debugImage"
@@ -720,49 +685,49 @@
 								accept="image/*"
 								bind:this={debugFileInput}
 								on:change={(e) => handleFileSelect(e, 'debug')}
-								class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
+								class="cyber-input rounded-md mt-1 block w-full text-sm font-mono file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-mono file:bg-yellow-900/50 file:text-yellow-400 hover:file:bg-yellow-800/50"
 								required
 							/>
-							<p class="mt-1 text-xs text-gray-500">
-								Supported formats: JPG, PNG, WebP. Max size: 15MB.
+							<p class="mt-2 text-xs text-yellow-500 font-mono opacity-70">
+								// Pipeline visualization enabled | Max: 15MB
 							</p>
 						</div>
 
 						<button
 							type="submit"
 							disabled={isLoading}
-							class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+							class="cyber-button w-full flex justify-center py-4 px-6 rounded-md text-sm font-mono text-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed"
 						>
 							{#if isLoading}
-								<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+								<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
 									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 									<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 								</svg>
-								Processing...
+								> ANALYZING...
 							{:else}
-								Generate Debug Image
+								> GENERATE_DEBUG
 							{/if}
 						</button>
 					</form>
 
 					<!-- Debug Image Result -->
 					{#if debugImageUrl}
-						<div class="mt-8">
-							<h3 class="text-lg font-medium text-gray-900 mb-4">Debug Result</h3>
-							<div class="border rounded-lg overflow-hidden">
+						<div class="mt-10">
+							<h3 class="text-lg font-bold text-yellow-400 mb-6 font-mono">// PIPELINE_OUTPUT</h3>
+							<div class="cyber-border rounded-lg overflow-hidden">
 								<img
 									src={debugImageUrl}
 									alt="Debug result with face detection annotations"
 									class="w-full h-auto"
 								/>
 							</div>
-							<div class="mt-4 flex justify-end">
+							<div class="mt-6 flex justify-end">
 								<a
 									href={debugImageUrl}
 									download="debug_result.jpg"
-									class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-purple-700 bg-purple-100 hover:bg-purple-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+									class="cyber-button inline-flex items-center px-6 py-3 text-sm font-mono text-yellow-400 border-yellow-400/30"
 								>
-									Download Image
+									> DOWNLOAD_OUTPUT
 								</a>
 							</div>
 						</div>
@@ -772,48 +737,50 @@
 		</div>
 
 		<!-- Footer -->
-		<footer class="mt-12 text-center text-sm text-gray-500">
+		<footer class="mt-16 text-center text-sm text-cyan-500/70 font-mono">
 			<p>
-				Recognizr Face Recognition App -
-				<a href="https://github.com/netcodedev/recognizr" class="text-blue-600 hover:text-blue-500">View on GitHub</a>
+				// RECOGNIZR v2.0 - NEURAL BIOMETRIC SYSTEM //
+				<a href="https://github.com/netcodedev/recognizr" class="text-cyan-400 hover:text-pink-400 transition-colors cyber-glow">
+					[SOURCE_CODE]
+				</a>
 			</p>
 		</footer>
 	</main>
 
 	<!-- Naming Dialog Modal -->
 	{#if showNameDialog}
-		<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-			<div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-				<h3 class="text-lg font-medium text-gray-900 mb-4">Name This Face</h3>
-				<div class="mb-4">
-					<label for="newFaceName" class="block text-sm font-medium text-gray-700 mb-2">
-						Person's Name
+		<div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+			<div class="cyber-card rounded-lg p-8 max-w-md w-full mx-4 neon-border">
+				<h3 class="text-xl font-bold text-purple-400 mb-6 font-mono">// SUBJECT_IDENTIFICATION</h3>
+				<div class="mb-6">
+					<label for="newFaceName" class="block text-sm font-mono text-purple-300 mb-3">
+						> ASSIGN_IDENTIFIER
 					</label>
 					<input
 						id="newFaceName"
 						type="text"
 						bind:value={newFaceName}
-						placeholder="Enter the person's name"
-						class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+						placeholder="Enter subject name..."
+						class="cyber-input w-full rounded-md font-mono placeholder-purple-600"
 						maxlength="100"
 						on:keydown={(e) => e.key === 'Enter' && saveFaceName()}
 					/>
 				</div>
-				<div class="flex justify-end space-x-3">
+				<div class="flex justify-end space-x-4">
 					<button
 						type="button"
 						on:click={cancelNaming}
-						class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+						class="cyber-button px-6 py-3 rounded-md text-sm font-mono text-gray-400 border-gray-500/30"
 					>
-						Cancel
+						> ABORT
 					</button>
 					<button
 						type="button"
 						on:click={saveFaceName}
 						disabled={!newFaceName.trim() || isLoading}
-						class="px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+						class="cyber-button px-6 py-3 rounded-md text-sm font-mono text-purple-400 border-purple-400/30 disabled:opacity-50 disabled:cursor-not-allowed"
 					>
-						{isLoading ? 'Saving...' : 'Save Name'}
+						{isLoading ? '> PROCESSING...' : '> CONFIRM'}
 					</button>
 				</div>
 			</div>

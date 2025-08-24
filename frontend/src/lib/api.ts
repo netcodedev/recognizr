@@ -9,6 +9,11 @@ export interface RecognitionResult {
 	bbox?: [number, number, number, number]; // [x1, y1, x2, y2] in image coordinates
 }
 
+export interface GalleryPerson {
+	name: string;
+	image_base64: string; // Base64 encoded JPEG image
+}
+
 export interface ApiError {
 	message: string;
 	status: number;
@@ -100,6 +105,22 @@ export class RecognizrAPI {
 		}
 
 		return await response.blob();
+	}
+
+	/**
+	 * Get gallery of all enrolled people with their cropped images
+	 */
+	async getGallery(): Promise<GalleryPerson[]> {
+		const response = await fetch(`${this.baseUrl}/gallery`, {
+			method: 'GET'
+		});
+
+		if (!response.ok) {
+			const errorText = await response.text();
+			throw new ApiError(errorText, response.status);
+		}
+
+		return await response.json();
 	}
 
 	/**

@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { RecognizrAPI, validateImageFile, similarityToPercentage, API_BASE, type RecognitionResult } from '$lib/api';
+	import { RecognizrAPI, validateImageFile, similarityToPercentage, API_BASE, type RecognitionResult, type GalleryPerson } from '$lib/api';
 
 	// API instance
 	const api = new RecognizrAPI();
 
 	// Component state
-	let activeTab: 'enroll' | 'recognize' | 'debug' = 'enroll';
+	let activeTab: 'enroll' | 'recognize' | 'gallery' | 'debug' = 'enroll';
 	let isLoading = false;
 	let message = '';
 	let messageType: 'success' | 'error' | 'info' = 'info';
@@ -39,6 +39,10 @@
 	let newFaceName = '';
 	let showNameDialog = false;
 
+	// Gallery state
+	let galleryPeople: GalleryPerson[] = [];
+	let galleryLoaded = false;
+
 	function showMessage(text: string, type: 'success' | 'error' | 'info' = 'info') {
 		message = text;
 		messageType = type;
@@ -66,6 +70,26 @@
 
 	// Check API status on component mount
 	checkApiStatus();
+
+	// Function to load gallery
+	async function loadGallery() {
+		if (galleryLoaded) return;
+
+		isLoading = true;
+		try {
+			galleryPeople = await api.getGallery();
+			galleryLoaded = true;
+		} catch (error: any) {
+			showMessage(`Failed to load gallery: ${error.message}`, 'error');
+		} finally {
+			isLoading = false;
+		}
+	}
+
+	// Load gallery when gallery tab is selected
+	$: if (activeTab === 'gallery') {
+		loadGallery();
+	}
 
 	// Test function to simulate recognition results (for development/testing)
 	function addTestResults() {
@@ -123,6 +147,11 @@
 			recognitionResults[selectedFaceIndex].name = newFaceName.trim();
 			recognitionResults[selectedFaceIndex].similarity = 1.0; // High confidence for user-labeled face
 
+			// Refresh gallery if it was loaded
+			if (galleryLoaded) {
+				galleryLoaded = false;
+			}
+
 			// Close dialog and reset state
 			showNameDialog = false;
 			selectedFaceIndex = null;
@@ -168,6 +197,11 @@
 			enrollName = '';
 			enrollFile = null;
 			enrollFileInput.value = '';
+
+			// Refresh gallery if it was loaded
+			if (galleryLoaded) {
+				galleryLoaded = false;
+			}
 		} catch (error: any) {
 			showMessage(`Enrollment failed: ${error.message}`, 'error');
 		} finally {
@@ -343,6 +377,12 @@
 					on:click={() => activeTab = 'recognize'}
 				>
 					Recognize Faces
+				</button>
+				<button
+					class="py-2 px-1 border-b-2 font-medium text-sm {activeTab === 'gallery' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}"
+					on:click={() => activeTab = 'gallery'}
+				>
+					Gallery
 				</button>
 				<button
 					class="py-2 px-1 border-b-2 font-medium text-sm {activeTab === 'debug' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}"
@@ -576,6 +616,68 @@
 									</div>
 								</div>
 							{/if}
+						</div>
+					{/if}
+				</div>
+			{/if}
+
+			<!-- Gallery Tab -->
+			{#if activeTab === 'gallery'}
+				<div class="p-6">
+					<h2 class="text-lg font-medium text-gray-900 mb-4">Enrolled People Gallery</h2>
+					<p class="text-sm text-gray-600 mb-6">
+						View all people enrolled in the face recognition system.
+					</p>
+
+					{#if isLoading}
+						<div class="flex justify-center items-center py-12">
+							<svg class="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+								<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+							</svg>
+							<span class="ml-3 text-gray-600">Loading gallery...</span>
+						</div>
+					{:else if galleryPeople.length === 0}
+						<div class="text-center py-12">
+							<div class="mx-auto h-12 w-12 text-gray-400">
+								<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+								</svg>
+							</div>
+							<h3 class="mt-2 text-sm font-medium text-gray-900">No people enrolled</h3>
+							<p class="mt-1 text-sm text-gray-500">Get started by enrolling someone in the "Enroll Person" tab.</p>
+						</div>
+					{:else}
+						<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+							{#each galleryPeople as person}
+								<div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
+									<div class="aspect-square">
+										<img
+											src="data:image/jpeg;base64,{person.image_base64}"
+											alt="{person.name}"
+											class="w-full h-full object-cover"
+										/>
+									</div>
+									<div class="p-3">
+										<h3 class="text-sm font-medium text-gray-900 truncate" title="{person.name}">
+											{person.name}
+										</h3>
+									</div>
+								</div>
+							{/each}
+						</div>
+
+						<div class="mt-6 text-center">
+							<p class="text-sm text-gray-500">
+								{galleryPeople.length} {galleryPeople.length === 1 ? 'person' : 'people'} enrolled
+							</p>
+							<button
+								type="button"
+								on:click={() => { galleryLoaded = false; loadGallery(); }}
+								class="mt-2 text-sm text-blue-600 hover:text-blue-500"
+							>
+								Refresh Gallery
+							</button>
 						</div>
 					{/if}
 				</div>

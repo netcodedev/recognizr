@@ -396,6 +396,35 @@ pub fn get_recognition_embedding(
     Ok(embedding)
 }
 
+/// Creates a square cropped image of a face for gallery display
+/// The crop is larger than the bounding box to show more context around the face
+pub fn create_gallery_crop(
+    original_image: &DynamicImage,
+    face: &DetectedFace,
+    target_size: u32,
+) -> Result<Vec<u8>, AppError> {
+    let (image_width, image_height) = original_image.dimensions();
+
+    // Get square crop coordinates with 50% padding around the face
+    let (crop_x, crop_y, crop_size) = face.get_square_crop_coords(image_width, image_height, 0.5);
+
+    // Crop the image
+    let cropped = original_image.crop_imm(crop_x, crop_y, crop_size, crop_size);
+
+    // Resize to target size (square)
+    let resized = cropped.resize_exact(
+        target_size,
+        target_size,
+        image::imageops::FilterType::Triangle,
+    );
+
+    // Encode as JPEG
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    resized.write_to(&mut buffer, image::ImageFormat::Jpeg)?;
+
+    Ok(buffer.into_inner())
+}
+
 /// Draws bounding boxes and keypoints on an image.
 pub fn draw_detections(
     image: &mut DynamicImage,

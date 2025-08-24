@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 pub struct Person {
     pub name: String,
     pub embedding: Vec<f32>,
+    pub cropped_image: Vec<u8>, // JPEG encoded cropped face image
+}
+
+/// Represents a person for gallery display (without embedding data)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GalleryPerson {
+    pub name: String,
+    pub image_base64: String, // Base64 encoded JPEG image
 }
 
 /// Represents a clean, decoded face detection.
@@ -52,6 +60,31 @@ impl DetectedFace {
         let height = y2.saturating_sub(y1).max(1);
 
         (x1, y1, width, height)
+    }
+
+    /// Get square crop coordinates with padding around the face for gallery display
+    /// Returns coordinates for a square crop that's larger than the bounding box
+    pub fn get_square_crop_coords(&self, image_width: u32, image_height: u32, padding_factor: f32) -> (u32, u32, u32) {
+        let face_width = (self.bbox[2] - self.bbox[0]).abs();
+        let face_height = (self.bbox[3] - self.bbox[1]).abs();
+
+        // Use the larger dimension and add padding
+        let base_size = face_width.max(face_height);
+        let crop_size = (base_size * (1.0 + padding_factor)).round() as u32;
+
+        // Calculate center of the face
+        let center_x = (self.bbox[0] + self.bbox[2]) / 2.0;
+        let center_y = (self.bbox[1] + self.bbox[3]) / 2.0;
+
+        // Calculate crop coordinates centered on the face
+        let half_size = crop_size / 2;
+        let crop_x = (center_x as u32).saturating_sub(half_size).min(image_width.saturating_sub(crop_size));
+        let crop_y = (center_y as u32).saturating_sub(half_size).min(image_height.saturating_sub(crop_size));
+
+        // Ensure crop size doesn't exceed image bounds
+        let final_crop_size = crop_size.min(image_width - crop_x).min(image_height - crop_y);
+
+        (crop_x, crop_y, final_crop_size)
     }
 }
 

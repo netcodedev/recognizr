@@ -1,6 +1,6 @@
 use crate::error::AppError;
-use crate::models::{DebugParams, DetectedFace, FinalResult, Person, RecognitionResult};
-use crate::pipeline::{detect_faces, draw_detections, get_recognition_embedding, X_OFFSET, Y_OFFSET};
+use crate::models::{DebugParams, DetectedFace, FinalResult, GalleryPerson, Person, RecognitionResult};
+use crate::pipeline::{detect_faces, draw_detections, get_recognition_embedding, create_gallery_crop, X_OFFSET, Y_OFFSET};
 use crate::AppState;
 use axum::routing::{get, post};
 use axum::{
@@ -13,6 +13,7 @@ use tower_http::cors::{CorsLayer, Any};
 use tracing::debug;
 use std::sync::Arc;
 use std::time::Instant;
+use base64::{Engine as _, engine::general_purpose};
 
 // --- VALIDATION CONSTANTS ---
 const MAX_IMAGE_SIZE: usize = 15 * 1024 * 1024; // 15MB
@@ -32,6 +33,7 @@ pub fn create_router() -> axum::Router<Arc<AppState>> {
         .route("/enroll", post(enroll_handler))
         .route("/enroll-from-bbox", post(enroll_from_bbox_handler))
         .route("/recognize", post(recognize_handler))
+        .route("/gallery", get(gallery_handler))
         .route("/debug/detector", axum::routing::post(debug_detector_handler))
         .layer(DefaultBodyLimit::max(15 * 1024 * 1024)) // 15MB limit for image uploads
         .layer(cors) // Add CORS layer
@@ -44,6 +46,28 @@ async fn health_handler() -> Json<serde_json::Value> {
         "service": "recognizr",
         "version": "0.1.0"
     }))
+}
+
+// Gallery endpoint to get all enrolled people with their cropped images
+async fn gallery_handler(State(state): State<Arc<AppState>>) -> Result<Json<Vec<GalleryPerson>>, AppError> {
+    let people: Vec<Person> = state.db
+        .select("person")
+        .await?;
+
+    // Convert to gallery format with base64 encoded images
+    let gallery_people: Vec<GalleryPerson> = people
+        .into_iter()
+        .map(|person| GalleryPerson {
+            name: person.name,
+            image_base64: general_purpose::STANDARD.encode(&person.cropped_image),
+        })
+        .collect();
+
+    // Sort by name
+    let mut sorted_gallery = gallery_people;
+    sorted_gallery.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(Json(sorted_gallery))
 }
 
 async fn enroll_handler(
@@ -103,7 +127,10 @@ async fn enroll_handler(
         get_recognition_embedding(&mut recognizer_session_guard, &original_image, face, &state.recognizer_metadata)?
     };
 
-    let person = Person { name, embedding };
+    // Create gallery crop (256x256 square image)
+    let cropped_image = create_gallery_crop(&original_image, face, 256)?;
+
+    let person = Person { name, embedding, cropped_image };
     let _created_person: Option<Person> = state.db.create("person").content(person).await?;
 
     Ok(StatusCode::CREATED)
@@ -163,7 +190,10 @@ async fn enroll_from_bbox_handler(
         get_recognition_embedding(&mut recognizer_session_guard, &original_image, &face, &state.recognizer_metadata)?
     };
 
-    let person = Person { name, embedding };
+    // Create gallery crop (256x256 square image)
+    let cropped_image = create_gallery_crop(&original_image, &face, 256)?;
+
+    let person = Person { name, embedding, cropped_image };
     let _created_person: Option<Person> = state.db.create("person").content(person).await?;
 
     Ok(StatusCode::CREATED)

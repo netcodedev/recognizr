@@ -5,8 +5,8 @@ export const API_BASE = 'http://localhost:3000';
 // Type definitions matching the Rust backend
 export interface RecognitionResult {
 	name: string;
-	similarity: number;
-	bbox?: [number, number, number, number]; // [x1, y1, x2, y2]
+	similarity: number; // Range: -1.0 to 1.0 (cosine similarity)
+	bbox?: [number, number, number, number]; // [x1, y1, x2, y2] in image coordinates
 }
 
 export interface ApiError {
@@ -133,9 +133,14 @@ export function validateImageFile(file: File): string | null {
 	return null; // No validation errors
 }
 
-// Format similarity score as percentage
+// Convert similarity score (-1 to 1) to percentage (0 to 100)
+export function similarityToPercentage(similarity: number): number {
+	return Math.max(0, Math.min(100, (similarity + 1) * 50));
+}
+
+// Format similarity score as percentage (adjusted for -1 to 1 range)
 export function formatSimilarity(similarity: number): string {
-	return `${(similarity * 100).toFixed(1)}%`;
+	return `${similarityToPercentage(similarity).toFixed(1)}%`;
 }
 
 // Get confidence level based on similarity score

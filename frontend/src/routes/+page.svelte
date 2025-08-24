@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { RecognizrAPI, validateImageFile, formatSimilarity, getConfidenceLevel, API_BASE, type RecognitionResult } from '$lib/api';
+	import { RecognizrAPI, validateImageFile, similarityToPercentage, API_BASE, type RecognitionResult } from '$lib/api';
 
 	// API instance
 	const api = new RecognizrAPI();
@@ -19,6 +19,9 @@
 	let recognizeFile: File | null = null;
 	let recognizeFileInput: HTMLInputElement;
 	let recognitionResults: RecognitionResult[] = [];
+	let recognizeImageUrl = '';
+	let imageElement: HTMLImageElement;
+	let imageLoaded = false;
 
 	// Debug form state
 	let debugFile: File | null = null;
@@ -57,6 +60,30 @@
 
 	// Check API status on component mount
 	checkApiStatus();
+
+	// Test function to simulate recognition results (for development/testing)
+	function addTestResults() {
+		if (!recognizeImageUrl || !imageElement) return;
+
+		// Simulate some test results with different confidence levels
+		recognitionResults = [
+			{
+				name: "John Doe",
+				similarity: 0.85, // High confidence
+				bbox: [100, 50, 200, 180] // [x1, y1, x2, y2]
+			},
+			{
+				name: "Jane Smith",
+				similarity: 0.45, // Medium confidence
+				bbox: [300, 80, 400, 210]
+			},
+			{
+				name: "Unknown",
+				similarity: 0.15, // Low confidence
+				bbox: [150, 250, 250, 380]
+			}
+		];
+	}
 
 	async function handleEnroll() {
 		if (!enrollName.trim()) {
@@ -106,6 +133,13 @@
 
 		isLoading = true;
 		recognitionResults = [];
+		imageLoaded = false;
+
+		// Create image URL for display
+		if (recognizeImageUrl) {
+			URL.revokeObjectURL(recognizeImageUrl);
+		}
+		recognizeImageUrl = URL.createObjectURL(recognizeFile);
 
 		try {
 			const results = await api.recognize(recognizeFile);
@@ -116,6 +150,11 @@
 		} finally {
 			isLoading = false;
 		}
+	}
+
+	// Handle image load event to enable overlay positioning
+	function handleImageLoad() {
+		imageLoaded = true;
 	}
 
 	async function handleDebug() {
@@ -164,6 +203,13 @@
 					break;
 				case 'recognize':
 					recognizeFile = file;
+					// Clear previous results and image
+					recognitionResults = [];
+					imageLoaded = false;
+					if (recognizeImageUrl) {
+						URL.revokeObjectURL(recognizeImageUrl);
+						recognizeImageUrl = '';
+					}
 					break;
 				case 'debug':
 					debugFile = file;
@@ -340,61 +386,123 @@
 							</p>
 						</div>
 
-						<button
-							type="submit"
-							disabled={isLoading}
-							class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
-						>
-							{#if isLoading}
-								<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-									<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-								</svg>
-								Recognizing...
-							{:else}
-								Recognize Faces
+						<div class="space-y-3">
+							<button
+								type="submit"
+								disabled={isLoading}
+								class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{#if isLoading}
+									<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+										<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+										<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+									</svg>
+									Recognizing...
+								{:else}
+									Recognize Faces
+								{/if}
+							</button>
+
+							<!-- Test button for development -->
+							{#if recognizeImageUrl && imageLoaded}
+								<button
+									type="button"
+									on:click={addTestResults}
+									class="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+								>
+									Add Test Results (Demo)
+								</button>
 							{/if}
-						</button>
+						</div>
 					</form>
 
-					<!-- Recognition Results -->
-					{#if recognitionResults.length > 0}
+					<!-- Recognition Results with Image Overlay -->
+					{#if recognizeImageUrl}
 						<div class="mt-8">
 							<h3 class="text-lg font-medium text-gray-900 mb-4">Recognition Results</h3>
-							<div class="space-y-3">
-								{#each recognitionResults as result, index}
-									<div class="bg-gray-50 rounded-lg p-4">
-										<div class="flex justify-between items-start">
-											<div>
-												<h4 class="font-medium text-gray-900">Face #{index + 1}</h4>
-												<p class="text-sm text-gray-600">
-													Name: <span class="font-medium">{result.name}</span>
-												</p>
-												<p class="text-sm text-gray-600">
-													Similarity: <span class="font-medium">{formatSimilarity(result.similarity)}</span>
-												</p>
-												{#if result.bbox}
-													<p class="text-xs text-gray-500 mt-1">
-														Bounding box: [{result.bbox.map(n => n.toFixed(1)).join(', ')}]
-													</p>
-												{/if}
+							<div class="relative inline-block max-w-full">
+								<!-- Main Image -->
+								<img
+									bind:this={imageElement}
+									src={recognizeImageUrl}
+									alt="Uploaded for recognition"
+									class="max-w-full h-auto rounded-lg shadow-lg block"
+									on:load={handleImageLoad}
+								/>
+
+								<!-- Face Overlays -->
+								{#if imageLoaded && recognitionResults.length > 0}
+									{#each recognitionResults as result}
+										{#if result.bbox && imageElement}
+											{@const imageNaturalWidth = imageElement.naturalWidth}
+											{@const imageNaturalHeight = imageElement.naturalHeight}
+											{@const imageDisplayWidth = imageElement.offsetWidth}
+											{@const imageDisplayHeight = imageElement.offsetHeight}
+											{@const scaleX = imageDisplayWidth / imageNaturalWidth}
+											{@const scaleY = imageDisplayHeight / imageNaturalHeight}
+											{@const x1 = result.bbox[0] * scaleX}
+											{@const y1 = result.bbox[1] * scaleY}
+											{@const x2 = result.bbox[2] * scaleX}
+											{@const y2 = result.bbox[3] * scaleY}
+											{@const width = x2 - x1}
+											{@const height = y2 - y1}
+											{@const percentage = similarityToPercentage(result.similarity)}
+
+											<!-- Bounding Box -->
+											<div
+												class="absolute border-2 {result.name === 'Unknown' ? 'border-gray-400' : percentage >= 75 ? 'border-green-400' : percentage >= 50 ? 'border-yellow-400' : 'border-red-400'}"
+												style="left: {x1}px; top: {y1}px; width: {width}px; height: {height}px;"
+											></div>
+
+											<!-- Label -->
+											<div
+												class="absolute px-2 py-1 text-xs font-medium text-white rounded shadow-lg {result.name === 'Unknown' ? 'bg-gray-600' : percentage >= 75 ? 'bg-green-600' : percentage >= 50 ? 'bg-yellow-600' : 'bg-red-600'}"
+												style="left: {x1}px; top: {Math.max(0, y1 - 28)}px;"
+											>
+												<div class="whitespace-nowrap">
+													{result.name}
+													{#if result.name !== 'Unknown'}
+														<span class="ml-1 opacity-90">({percentage.toFixed(0)}%)</span>
+													{/if}
+												</div>
 											</div>
-											<div class="text-right">
-												{#if result.name === 'Unknown'}
-													<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-														Unknown
-													</span>
-												{:else}
-													{@const level = getConfidenceLevel(result.similarity)}
-													<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {level === 'high' ? 'bg-green-100 text-green-800' : level === 'medium' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}">
-														{level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low'} Confidence
-													</span>
-												{/if}
-											</div>
-										</div>
-									</div>
-								{/each}
+										{/if}
+									{/each}
+								{/if}
 							</div>
+
+							<!-- Results Summary -->
+							{#if recognitionResults.length > 0}
+								<div class="mt-6 bg-gray-50 rounded-lg p-4">
+									<h4 class="font-medium text-gray-900 mb-3">Detection Summary</h4>
+									<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+										{#each recognitionResults as result, index}
+											{@const percentage = similarityToPercentage(result.similarity)}
+											<div class="bg-white rounded p-3 border">
+												<div class="flex items-center justify-between">
+													<span class="font-medium text-sm">Face #{index + 1}</span>
+													{#if result.name === 'Unknown'}
+														<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+															Unknown
+														</span>
+													{:else}
+														<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium {percentage >= 75 ? 'bg-green-100 text-green-800' : percentage >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}">
+															{percentage >= 75 ? 'High' : percentage >= 50 ? 'Medium' : 'Low'}
+														</span>
+													{/if}
+												</div>
+												<div class="mt-1">
+													<p class="text-sm text-gray-900">{result.name}</p>
+													{#if result.name !== 'Unknown'}
+														<p class="text-xs text-gray-500">Confidence: {percentage.toFixed(1)}%</p>
+														<p class="text-xs text-gray-400">Raw score: {result.similarity.toFixed(3)}</p>
+													{/if}
+												</div>
+											</div>
+										{/each}
+									</div>
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>

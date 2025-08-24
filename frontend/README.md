@@ -50,13 +50,22 @@ A SvelteKit-based web application for the Recognizr face recognition system.
 1. Click on the "Recognize Faces" tab
 2. Select an image file that may contain multiple faces
 3. Click "Recognize Faces"
-4. View the results showing detected faces with names and confidence scores
+4. View the uploaded image with visual overlays for each detected face
 
-**Results include:**
-- Person's name (or "Unknown" if not recognized)
-- Similarity percentage
-- Confidence level (High/Medium/Low)
-- Bounding box coordinates
+**Visual Results:**
+- **Image Display**: The uploaded image is shown with face detection overlays
+- **Bounding Boxes**: Color-coded rectangles around each detected face
+  - Green: High confidence (≥75%)
+  - Yellow: Medium confidence (50-74%)
+  - Red: Low confidence (<50%)
+  - Gray: Unknown faces
+- **Face Labels**: Name and confidence percentage displayed above each face
+- **Results Summary**: Detailed breakdown below the image
+
+**Similarity Scoring:**
+- Raw similarity scores range from -1.0 to 1.0 (cosine similarity)
+- Converted to percentage: `(similarity + 1) × 50 = 0-100%`
+- Confidence levels: High (≥75%), Medium (50-74%), Low (<50%)
 
 ### Debug Detection
 

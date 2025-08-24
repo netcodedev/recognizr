@@ -2,13 +2,14 @@ use crate::error::AppError;
 use crate::models::{DebugParams, DetectedFace, FinalResult, Person, RecognitionResult};
 use crate::pipeline::{detect_faces, draw_detections, get_recognition_embedding, X_OFFSET, Y_OFFSET};
 use crate::AppState;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{
     extract::{DefaultBodyLimit, Multipart, Query, State},
     http::{header, HeaderMap, StatusCode},
     Json,
 };
 use image::{DynamicImage, GenericImageView};
+use tower_http::cors::{CorsLayer, Any};
 use tracing::debug;
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,11 +21,28 @@ const MIN_IMAGE_DIMENSION: u32 = 32;
 const MAX_IMAGE_DIMENSION: u32 = 8192;
 
 pub fn create_router() -> axum::Router<Arc<AppState>> {
+    // Configure CORS to allow requests from the frontend
+    let cors = CorsLayer::new()
+        .allow_origin(Any) // In production, specify exact origins like "http://localhost:5173"
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     axum::Router::new()
+        .route("/health", get(health_handler))
         .route("/enroll", post(enroll_handler))
         .route("/recognize", post(recognize_handler))
         .route("/debug/detector", axum::routing::post(debug_detector_handler))
         .layer(DefaultBodyLimit::max(15 * 1024 * 1024)) // 15MB limit for image uploads
+        .layer(cors) // Add CORS layer
+}
+
+// Simple health check endpoint that doesn't require database access
+async fn health_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "service": "recognizr",
+        "version": "0.1.0"
+    }))
 }
 
 async fn enroll_handler(

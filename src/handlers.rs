@@ -30,6 +30,7 @@ pub fn create_router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/health", get(health_handler))
         .route("/enroll", post(enroll_handler))
+        .route("/enroll-from-bbox", post(enroll_from_bbox_handler))
         .route("/recognize", post(recognize_handler))
         .route("/debug/detector", axum::routing::post(debug_detector_handler))
         .layer(DefaultBodyLimit::max(15 * 1024 * 1024)) // 15MB limit for image uploads
@@ -100,6 +101,66 @@ async fn enroll_handler(
     let embedding = {
         let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
         get_recognition_embedding(&mut recognizer_session_guard, &original_image, face, &state.recognizer_metadata)?
+    };
+
+    let person = Person { name, embedding };
+    let _created_person: Option<Person> = state.db.create("person").content(person).await?;
+
+    Ok(StatusCode::CREATED)
+}
+
+async fn enroll_from_bbox_handler(
+    State(state): State<Arc<AppState>>,
+    multipart: Multipart,
+) -> Result<StatusCode, AppError> {
+    let (name, image_bytes, bbox) = parse_enroll_bbox_multipart(multipart).await?;
+
+    // Validate name
+    if name.trim().is_empty() {
+        return Err(AppError::BadRequest("Name cannot be empty".to_string()));
+    }
+    if name.len() > MAX_NAME_LENGTH {
+        return Err(AppError::BadRequest(format!("Name too long (max {} characters)", MAX_NAME_LENGTH)));
+    }
+
+    // Validate image size
+    if image_bytes.is_empty() {
+        return Err(AppError::BadRequest("Image data is empty".to_string()));
+    }
+    if image_bytes.len() > MAX_IMAGE_SIZE {
+        return Err(AppError::BadRequest(format!("Image too large (max {} MB)", MAX_IMAGE_SIZE / (1024 * 1024))));
+    }
+
+    let original_image = image::load_from_memory(&image_bytes)?;
+    let (original_w, original_h) = original_image.dimensions();
+
+    // Validate image dimensions
+    if original_w < MIN_IMAGE_DIMENSION || original_h < MIN_IMAGE_DIMENSION {
+        return Err(AppError::BadRequest(format!("Image too small (min {}x{})", MIN_IMAGE_DIMENSION, MIN_IMAGE_DIMENSION)));
+    }
+    if original_w > MAX_IMAGE_DIMENSION || original_h > MAX_IMAGE_DIMENSION {
+        return Err(AppError::BadRequest(format!("Image too large (max {}x{})", MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION)));
+    }
+
+    // Validate bounding box coordinates
+    if bbox[0] < 0.0 || bbox[1] < 0.0 || bbox[2] > original_w as f32 || bbox[3] > original_h as f32 {
+        return Err(AppError::BadRequest("Bounding box coordinates are out of image bounds".to_string()));
+    }
+    if bbox[0] >= bbox[2] || bbox[1] >= bbox[3] {
+        return Err(AppError::BadRequest("Invalid bounding box: x1 must be < x2 and y1 must be < y2".to_string()));
+    }
+
+    // Create a DetectedFace from the provided bbox
+    let face = DetectedFace {
+        bbox,
+        kps: [[0.0, 0.0]; 5], // Dummy keypoints since we only have bbox
+        score: 1.0, // High confidence since user selected it
+    };
+
+    // Generate embedding directly from the bbox coordinates
+    let embedding = {
+        let mut recognizer_session_guard = state.recognizer_session.lock().unwrap();
+        get_recognition_embedding(&mut recognizer_session_guard, &original_image, &face, &state.recognizer_metadata)?
     };
 
     let person = Person { name, embedding };
@@ -327,4 +388,54 @@ async fn parse_recognize_multipart(mut multipart: Multipart) -> Result<Vec<u8>, 
         }
     }
     Err(AppError::MissingMultipartField("image".to_string()))
+}
+
+async fn parse_enroll_bbox_multipart(
+    mut multipart: Multipart,
+) -> Result<(String, Vec<u8>, [f32; 4]), AppError> {
+    let mut name = None;
+    let mut image_bytes = None;
+    let mut bbox = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        AppError::BadRequest(format!("Failed to read multipart field: {}", e))
+    })? {
+        let field_name = field.name().unwrap_or("").to_string();
+
+        match field_name.as_str() {
+            "name" => {
+                name = Some(field.text().await.map_err(|e| {
+                    AppError::BadRequest(format!("Failed to read name field: {}", e))
+                })?);
+            }
+            "image" => {
+                image_bytes = Some(field.bytes().await.map_err(|e| {
+                    AppError::BadRequest(format!("Failed to read image field: {}", e))
+                })?.to_vec());
+            }
+            "bbox" => {
+                let bbox_str = field.text().await.map_err(|e| {
+                    AppError::BadRequest(format!("Failed to read bbox field: {}", e))
+                })?;
+                // Parse bbox as "x1,y1,x2,y2"
+                let coords: Result<Vec<f32>, _> = bbox_str
+                    .split(',')
+                    .map(|s| s.trim().parse::<f32>())
+                    .collect();
+                match coords {
+                    Ok(coords) if coords.len() == 4 => {
+                        bbox = Some([coords[0], coords[1], coords[2], coords[3]]);
+                    }
+                    _ => return Err(AppError::BadRequest("Invalid bbox format. Expected: x1,y1,x2,y2".to_string())),
+                }
+            }
+            _ => {} // Ignore unknown fields
+        }
+    }
+
+    let name = name.ok_or_else(|| AppError::MissingMultipartField("name".to_string()))?;
+    let image_bytes = image_bytes.ok_or_else(|| AppError::MissingMultipartField("image".to_string()))?;
+    let bbox = bbox.ok_or_else(|| AppError::MissingMultipartField("bbox".to_string()))?;
+
+    Ok((name, image_bytes, bbox))
 }

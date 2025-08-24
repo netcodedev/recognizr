@@ -42,6 +42,26 @@ export class RecognizrAPI {
 	}
 
 	/**
+	 * Enroll a person from a specific face in an image using bounding box coordinates
+	 */
+	async enrollFromBbox(name: string, imageFile: File, bbox: [number, number, number, number]): Promise<void> {
+		const formData = new FormData();
+		formData.append('name', name.trim());
+		formData.append('image', imageFile);
+		formData.append('bbox', bbox.join(','));
+
+		const response = await fetch(`${this.baseUrl}/enroll-from-bbox`, {
+			method: 'POST',
+			body: formData
+		});
+
+		if (!response.ok) {
+			const errorText = await response.text();
+			throw new ApiError(errorText, response.status);
+		}
+	}
+
+	/**
 	 * Recognize faces in an image
 	 */
 	async recognize(imageFile: File): Promise<RecognitionResult[]> {

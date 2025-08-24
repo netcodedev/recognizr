@@ -33,6 +33,12 @@
 	let apiStatus: 'checking' | 'connected' | 'disconnected' = 'checking';
 	let apiInfo: {status: string, service: string, version: string} | null = null;
 
+	// Face naming state
+	let isNamingMode = false;
+	let selectedFaceIndex: number | null = null;
+	let newFaceName = '';
+	let showNameDialog = false;
+
 	function showMessage(text: string, type: 'success' | 'error' | 'info' = 'info') {
 		message = text;
 		messageType = type;
@@ -83,6 +89,57 @@
 				bbox: [150, 250, 250, 380]
 			}
 		];
+	}
+
+	// Function to handle face click for naming
+	function handleFaceClick(faceIndex: number, bbox: [number, number, number, number]) {
+		if (!isNamingMode) return;
+
+		selectedFaceIndex = faceIndex;
+		newFaceName = '';
+		showNameDialog = true;
+	}
+
+	// Function to save the new face name
+	async function saveFaceName() {
+		if (!newFaceName.trim() || selectedFaceIndex === null || !recognizeFile) {
+			showMessage('Please enter a valid name', 'error');
+			return;
+		}
+
+		const selectedResult = recognitionResults[selectedFaceIndex];
+		if (!selectedResult.bbox) {
+			showMessage('No bounding box data for selected face', 'error');
+			return;
+		}
+
+		isLoading = true;
+
+		try {
+			await api.enrollFromBbox(newFaceName.trim(), recognizeFile, selectedResult.bbox);
+			showMessage(`Successfully enrolled ${newFaceName}!`, 'success');
+
+			// Update the recognition result to show the new name
+			recognitionResults[selectedFaceIndex].name = newFaceName.trim();
+			recognitionResults[selectedFaceIndex].similarity = 1.0; // High confidence for user-labeled face
+
+			// Close dialog and reset state
+			showNameDialog = false;
+			selectedFaceIndex = null;
+			newFaceName = '';
+			isNamingMode = false;
+		} catch (error: any) {
+			showMessage(`Failed to enroll face: ${error.message}`, 'error');
+		} finally {
+			isLoading = false;
+		}
+	}
+
+	function cancelNaming() {
+		showNameDialog = false;
+		selectedFaceIndex = null;
+		newFaceName = '';
+		isNamingMode = false;
 	}
 
 	async function handleEnroll() {
@@ -413,6 +470,17 @@
 									Add Test Results (Demo)
 								</button>
 							{/if}
+
+							<!-- Name unknown faces button -->
+							{#if recognitionResults.length > 0}
+								<button
+									type="button"
+									on:click={() => isNamingMode = !isNamingMode}
+									class="w-full flex justify-center py-2 px-4 border border-blue-300 rounded-md shadow-sm text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+								>
+									{isNamingMode ? 'Cancel Naming Mode' : 'Name Unknown Faces'}
+								</button>
+							{/if}
 						</div>
 					</form>
 
@@ -432,7 +500,7 @@
 
 								<!-- Face Overlays -->
 								{#if imageLoaded && recognitionResults.length > 0}
-									{#each recognitionResults as result}
+									{#each recognitionResults as result, index}
 										{#if result.bbox && imageElement}
 											{@const imageNaturalWidth = imageElement.naturalWidth}
 											{@const imageNaturalHeight = imageElement.naturalHeight}
@@ -450,8 +518,13 @@
 
 											<!-- Bounding Box -->
 											<div
-												class="absolute border-2 {result.name === 'Unknown' ? 'border-gray-400' : percentage >= 75 ? 'border-green-400' : percentage >= 50 ? 'border-yellow-400' : 'border-red-400'}"
+												class="absolute border-2 {result.name === 'Unknown' ? 'border-gray-400' : percentage >= 75 ? 'border-green-400' : percentage >= 50 ? 'border-yellow-400' : 'border-red-400'} {isNamingMode && result.name === 'Unknown' ? 'cursor-pointer hover:border-blue-500 hover:bg-blue-100 hover:bg-opacity-20' : ''}"
 												style="left: {x1}px; top: {y1}px; width: {width}px; height: {height}px;"
+												role={isNamingMode && result.name === 'Unknown' ? 'button' : undefined}
+												tabindex={isNamingMode && result.name === 'Unknown' ? 0 : -1}
+												on:click={() => result.name === 'Unknown' && result.bbox ? handleFaceClick(index, result.bbox) : null}
+												on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && result.name === 'Unknown' && result.bbox ? handleFaceClick(index, result.bbox) : null}
+												title={isNamingMode && result.name === 'Unknown' ? 'Click to name this face' : ''}
 											></div>
 
 											<!-- Label -->
@@ -600,8 +673,48 @@
 		<footer class="mt-12 text-center text-sm text-gray-500">
 			<p>
 				Recognizr Face Recognition App -
-				<a href="https://github.com/your-repo" class="text-blue-600 hover:text-blue-500">View on GitHub</a>
+				<a href="https://github.com/netcodedev/recognizr" class="text-blue-600 hover:text-blue-500">View on GitHub</a>
 			</p>
 		</footer>
 	</main>
+
+	<!-- Naming Dialog Modal -->
+	{#if showNameDialog}
+		<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+			<div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+				<h3 class="text-lg font-medium text-gray-900 mb-4">Name This Face</h3>
+				<div class="mb-4">
+					<label for="newFaceName" class="block text-sm font-medium text-gray-700 mb-2">
+						Person's Name
+					</label>
+					<input
+						id="newFaceName"
+						type="text"
+						bind:value={newFaceName}
+						placeholder="Enter the person's name"
+						class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+						maxlength="100"
+						on:keydown={(e) => e.key === 'Enter' && saveFaceName()}
+					/>
+				</div>
+				<div class="flex justify-end space-x-3">
+					<button
+						type="button"
+						on:click={cancelNaming}
+						class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						on:click={saveFaceName}
+						disabled={!newFaceName.trim() || isLoading}
+						class="px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						{isLoading ? 'Saving...' : 'Save Name'}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>

@@ -533,8 +533,8 @@
 
 											<!-- Label -->
 											<div
-												class="absolute px-3 py-2 text-xs font-mono font-bold text-black rounded-md backdrop-blur-sm border transition-all duration-300 {result.name === 'Unknown' ? 'bg-gray-400/90 border-gray-400' : percentage >= 75 ? 'bg-green-400/90 border-green-400 cyber-glow' : percentage >= 50 ? 'bg-yellow-400/90 border-yellow-400' : 'bg-red-400/90 border-red-400'}"
-												style="left: {x1}px; top: {Math.max(0, y1 - 36)}px;"
+												class="absolute px-2 py-1 text-xs font-mono font-bold text-black rounded-md backdrop-blur-sm border transition-all duration-300 {result.name === 'Unknown' ? 'bg-gray-400/90 border-gray-400' : percentage >= 75 ? 'bg-green-400/90 border-green-400 cyber-glow' : percentage >= 50 ? 'bg-yellow-400/90 border-yellow-400' : 'bg-red-400/90 border-red-400'}"
+												style="left: {x1}px; top: {Math.max(0, y1 - 24)}px;"
 											>
 												<div class="whitespace-nowrap">
 													{result.name.toUpperCase()}
@@ -621,9 +621,8 @@
 											alt="{person.name}"
 											class="w-full h-full object-cover"
 										/>
-										<div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
 									</div>
-									<div class="p-4 bg-gradient-to-r from-purple-900/20 to-cyan-900/20">
+									<div class="px-2 py-1 bg-gradient-to-r from-purple-900/20 to-cyan-900/20">
 										<h3 class="text-sm font-mono text-purple-300 truncate" title="{person.name}">
 											> {person.name.toUpperCase()}
 										</h3>
@@ -634,14 +633,14 @@
 
 						<div class="mt-8 text-center">
 							<p class="text-sm text-purple-400 font-mono">
-								// {galleryPeople.length} PATTERN{galleryPeople.length === 1 ? '' : 'S'}_REGISTERED
+								// {galleryPeople.length} PATTERN{galleryPeople.length === 1 ? '' : 'S'} REGISTERED
 							</p>
 							<button
 								type="button"
 								on:click={() => { galleryLoaded = false; loadGallery(); }}
 								class="cyber-button mt-4 px-6 py-2 text-sm font-mono text-purple-400 border-purple-400/30"
 							>
-								> REFRESH_DATABASE
+								> REFRESH
 							</button>
 						</div>
 					{/if}

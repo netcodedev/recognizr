@@ -3,3 +3,4 @@ debug_*.png
 *.jpg
 *.ttf
 /assets
+metadata.json

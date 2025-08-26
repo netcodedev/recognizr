@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { RecognizrAPI, validateImageFile, similarityToPercentage, API_BASE, type RecognitionResult, type GalleryPerson } from '$lib/api';
+	import { onMount } from 'svelte';
+	import { RecognizrAPI, GooglePhotosAPI, validateImageFile, similarityToPercentage, API_BASE, type RecognitionResult, type GalleryPerson, type PickedMediaItem, type PickingSession, type SavedImage } from '$lib/api';
 
-	// API instance
+	// API instances
 	const api = new RecognizrAPI();
 
 	// Component state
-	let activeTab: 'enroll' | 'recognize' | 'gallery' | 'debug' = 'enroll';
+	let activeTab: 'enroll' | 'recognize' | 'gallery' | 'debug' | 'google-photos' = 'enroll';
 	let isLoading = false;
 	let message = '';
 	let messageType: 'success' | 'error' | 'info' = 'info';
@@ -41,6 +42,240 @@
 	// Gallery state
 	let galleryPeople: GalleryPerson[] = [];
 	let galleryLoaded = false;
+
+	// Update API instances
+	let googlePhotos: GooglePhotosAPI;
+
+	// Update Google Photos state
+	let pickedPhotos: PickedMediaItem[] = [];
+	let savedImages: SavedImage[] = [];
+	let googlePhotosLoading = false;
+	let googlePhotoProcessing = false;
+	let currentSession: PickingSession | null = null;
+	let isPolling = false;
+	let savedImagesLoaded = false;
+
+	// Update onMount
+	onMount(() => {
+		// Initialize Google Photos Picker API in browser
+		googlePhotos = new GooglePhotosAPI();
+
+		const urlParams = new URLSearchParams(window.location.search);
+		if (urlParams.get('google_photos_auth') === 'success') {
+			showMessage('Google Photos authentication successful!', 'success');
+			// Clean up URL
+			window.history.replaceState({}, '', window.location.pathname);
+		}
+	});
+
+	// Replace Google Photos functions
+	async function authenticateGooglePhotos() {
+		if (!googlePhotos) return;
+		
+		try {
+			const authUrl = googlePhotos.getAuthUrl();
+			showMessage('Redirecting to Google for authentication...', 'info');
+			window.location.href = authUrl;
+		} catch (error: any) {
+			console.error('Failed to start Google Photos authentication:', error);
+			showMessage(`Failed to start authentication: ${error.message || 'Unknown error'}`, 'error');
+		}
+	}
+
+	async function startPhotoPicking() {
+		if (!googlePhotos || !googlePhotos.isAuthenticated()) {
+			showMessage('Please authenticate with Google Photos first', 'error');
+			return;
+		}
+
+		// Check if we have the correct scope
+		if (!googlePhotos.hasPickerScope()) {
+			showMessage('Missing required scope. Please re-authenticate.', 'error');
+			return;
+		}
+
+		googlePhotosLoading = true;
+
+		try {
+			// Create a new picking session
+			const session = await googlePhotos.createSession();
+			currentSession = session;
+			
+			showMessage('Opening Google Photos picker...', 'info');
+			
+			// Open the picker URI in a new window/tab
+			window.open(session.pickerUri, '_blank');
+			
+			// Start polling for completion
+			isPolling = true;
+			await googlePhotos.startPolling(
+				session.id,
+				async (completedSession) => {
+					isPolling = false;
+					showMessage('Photos selected! Loading your picks...', 'success');
+					await loadPickedPhotos(completedSession.id);
+				},
+				(error) => {
+					console.error('Polling error:', error);
+					isPolling = false;
+
+					// Handle authentication errors specifically
+					if (error.message && error.message.includes('authentication')) {
+						showMessage('Google Photos authentication expired. Please reconnect and try again.', 'error');
+					} else {
+						showMessage('Failed to get selected photos. Please try again.', 'error');
+					}
+
+					googlePhotosLoading = false;
+				}
+			);
+			
+		} catch (error: any) {
+			console.error('Failed to start photo picking:', error);
+			showMessage(`Failed to start photo picking: ${error.message || 'Unknown error'}`, 'error');
+			googlePhotosLoading = false;
+			isPolling = false;
+		}
+	}
+
+	async function loadPickedPhotos(sessionId: string) {
+		try {
+			const response = await googlePhotos.listPickedMediaItems(sessionId);
+
+			// The API returns 'mediaItems' not 'pickedMediaItems'
+			pickedPhotos = response.pickedMediaItems || response.mediaItems || [];
+
+			if (pickedPhotos.length === 0) {
+				showMessage('No photos were selected', 'info');
+			} else {
+				showMessage(`Importing ${pickedPhotos.length} selected photos...`, 'info');
+
+				// Automatically import all selected photos
+				await importAllPickedPhotos();
+			}
+
+			// Clean up session
+			await googlePhotos.deleteSession(sessionId);
+			currentSession = null;
+
+		} catch (error: any) {
+			console.error('Failed to load picked photos:', error);
+			showMessage(`Failed to load selected photos: ${error.message || 'Unknown error'}`, 'error');
+		} finally {
+			googlePhotosLoading = false;
+		}
+	}
+
+	async function importAllPickedPhotos() {
+		if (!googlePhotos || pickedPhotos.length === 0) return;
+
+		try {
+			const accessToken = googlePhotos.getToken()?.access_token;
+			if (!accessToken) {
+				throw new Error('No access token available');
+			}
+
+			// Import all photos at once
+			const savedImages = await api.downloadMultipleGooglePhotos(pickedPhotos, accessToken);
+
+			if (savedImages.length === pickedPhotos.length) {
+				showMessage(`Successfully imported all ${savedImages.length} photos!`, 'success');
+			} else {
+				showMessage(`Imported ${savedImages.length} of ${pickedPhotos.length} photos (some failed)`, 'info');
+			}
+
+			// Clear picked photos since they're now imported
+			pickedPhotos = [];
+
+			// Refresh the saved images list
+			savedImagesLoaded = false;
+			await loadSavedImages();
+
+		} catch (error: any) {
+			console.error('Failed to import photos:', error);
+			showMessage(`Failed to import photos: ${error.message || 'Unknown error'}`, 'error');
+		}
+	}
+
+
+
+
+
+	async function analyzeSavedImage(savedImage: SavedImage) {
+		googlePhotoProcessing = true;
+
+		try {
+			// Analyze faces in the saved image
+			const results = await api.analyzeSavedImage(savedImage.id);
+
+			if (results.length === 0) {
+				showMessage(`No faces found in ${savedImage.original_filename}`, 'info');
+			} else {
+				showMessage(`Found ${results.length} face(s) in ${savedImage.original_filename}`, 'success');
+
+				// Create a File object for face naming functionality
+				const response = await fetch(`/images/${savedImage.filename}`);
+				const blob = await response.blob();
+				const file = new File([blob], savedImage.original_filename, { type: blob.type });
+
+				// Switch to recognize tab to show results
+				recognitionResults = results;
+				recognizeImageUrl = `/images/${savedImage.filename}`;
+				recognizeFile = file; // Set this so face naming works
+				activeTab = 'recognize';
+			}
+
+		} catch (error: any) {
+			console.error('Failed to analyze image:', error);
+			showMessage(`Failed to analyze ${savedImage.original_filename}: ${error.message || 'Unknown error'}`, 'error');
+		} finally {
+			googlePhotoProcessing = false;
+		}
+	}
+
+	async function loadSavedImages() {
+		if (savedImagesLoaded) return;
+
+		try {
+			savedImages = await api.getSavedImages();
+			savedImagesLoaded = true;
+		} catch (error: any) {
+			console.error('Failed to load saved images:', error);
+			showMessage(`Failed to load saved images: ${error.message || 'Unknown error'}`, 'error');
+		}
+	}
+
+	function disconnectGooglePhotos() {
+		if (!googlePhotos) return;
+
+		googlePhotos.clearAuth();
+		pickedPhotos = [];
+		currentSession = null;
+		isPolling = false;
+		showMessage('Disconnected from Google Photos', 'info');
+	}
+
+	function cancelPolling() {
+		if (googlePhotos && isPolling) {
+			googlePhotos.stopPolling();
+			isPolling = false;
+			googlePhotosLoading = false;
+			showMessage('Photo selection cancelled', 'info');
+		}
+	}
+
+	async function forceReauthenticate() {
+		if (!googlePhotos) return;
+		
+		// Clear existing token to force fresh authentication
+		googlePhotos.clearAuth();
+		pickedPhotos = [];
+		currentSession = null;
+		isPolling = false;
+		
+		// Start new authentication
+		await authenticateGooglePhotos();
+	}
 
 	function showMessage(text: string, type: 'success' | 'error' | 'info' = 'info') {
 		message = text;
@@ -89,6 +324,18 @@
 	$: if (activeTab === 'gallery') {
 		loadGallery();
 	}
+
+	// Load saved images when Google Photos tab is selected
+	$: if (activeTab === 'google-photos') {
+		loadSavedImages();
+	}
+
+	// Recalculate bbox positions when recognition results change
+	$: if (recognitionResults.length > 0 && imageLoaded && imageElement) {
+		calculateBboxPositions();
+	}
+
+
 
 	// Function to handle face click for naming
 	function handleFaceClick(faceIndex: number, bbox: [number, number, number, number]) {
@@ -218,9 +465,49 @@
 		}
 	}
 
+	// Store calculated bbox positions to avoid recalculation
+	let bboxPositions: Array<{x1: number, y1: number, x2: number, y2: number, width: number, height: number}> = [];
+
 	// Handle image load event to enable overlay positioning
 	function handleImageLoad() {
 		imageLoaded = true;
+		calculateBboxPositions();
+	}
+
+	// Calculate bbox positions once and store them
+	function calculateBboxPositions() {
+		if (!imageElement || !recognitionResults.length) {
+			bboxPositions = [];
+			return;
+		}
+
+		const imageNaturalWidth = imageElement.naturalWidth;
+		const imageNaturalHeight = imageElement.naturalHeight;
+		const imageDisplayWidth = imageElement.offsetWidth;
+		const imageDisplayHeight = imageElement.offsetHeight;
+
+		if (imageNaturalWidth === 0 || imageDisplayWidth === 0) {
+			bboxPositions = [];
+			return;
+		}
+
+		const scaleX = imageDisplayWidth / imageNaturalWidth;
+		const scaleY = imageDisplayHeight / imageNaturalHeight;
+
+		bboxPositions = recognitionResults.map((result, index) => {
+			if (!result.bbox) {
+				return { x1: 0, y1: 0, x2: 50, y2: 50, width: 50, height: 50 };
+			}
+
+			const x1 = result.bbox[0] * scaleX;
+			const y1 = result.bbox[1] * scaleY;
+			const x2 = result.bbox[2] * scaleX;
+			const y2 = result.bbox[3] * scaleY;
+			const width = x2 - x1;
+			const height = y2 - y1;
+
+			return { x1, y1, x2, y2, width, height };
+		});
 	}
 
 	async function handleDebug() {
@@ -289,6 +576,8 @@
 	<title>Recognizr - Face Recognition App</title>
 	<meta name="description" content="Face recognition application using the Recognizr API" />
 </svelte:head>
+
+
 
 <div class="min-h-screen">
 	<!-- Header -->
@@ -364,6 +653,12 @@
 					on:click={() => activeTab = 'debug'}
 				>
 					// DEBUG
+				</button>
+				<button
+					class="py-3 px-4 border-b-2 font-mono text-sm transition-all duration-300 {activeTab === 'google-photos' ? 'border-green-400 text-green-400 cyber-glow-green' : 'border-transparent text-gray-400 hover:text-green-300 hover:border-green-500/50'}"
+					on:click={() => activeTab = 'google-photos'}
+				>
+					// GOOGLE_PHOTOS
 				</button>
 			</nav>
 		</div>
@@ -502,28 +797,17 @@
 								/>
 
 								<!-- Face Overlays -->
-								{#if imageLoaded && recognitionResults.length > 0}
+								{#if imageLoaded && recognitionResults.length > 0 && bboxPositions.length > 0}
 									{#each recognitionResults as result, index}
-										{#if result.bbox && imageElement}
-											{@const imageNaturalWidth = imageElement.naturalWidth}
-											{@const imageNaturalHeight = imageElement.naturalHeight}
-											{@const imageDisplayWidth = imageElement.offsetWidth}
-											{@const imageDisplayHeight = imageElement.offsetHeight}
-											{@const scaleX = imageDisplayWidth / imageNaturalWidth}
-											{@const scaleY = imageDisplayHeight / imageNaturalHeight}
-											{@const x1 = result.bbox[0] * scaleX}
-											{@const y1 = result.bbox[1] * scaleY}
-											{@const x2 = result.bbox[2] * scaleX}
-											{@const y2 = result.bbox[3] * scaleY}
-											{@const width = x2 - x1}
-											{@const height = y2 - y1}
+										{#if result.bbox && bboxPositions[index]}
+											{@const pos = bboxPositions[index]}
 											{@const percentage = similarityToPercentage(result.similarity)}
 
 											<!-- Bounding Box -->
 											<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 											<div
 												class="absolute border-2 transition-all duration-300 {result.name === 'Unknown' ? 'border-gray-400 shadow-lg shadow-gray-400/20' : percentage >= 75 ? 'border-green-400 shadow-lg shadow-green-400/30 cyber-glow' : percentage >= 50 ? 'border-yellow-400 shadow-lg shadow-yellow-400/30' : 'border-red-400 shadow-lg shadow-red-400/30'} {isNamingMode && result.name === 'Unknown' ? 'cursor-pointer hover:border-cyan-400 hover:shadow-cyan-400/40 hover:bg-cyan-400/10' : ''}"
-												style="left: {x1}px; top: {y1}px; width: {width}px; height: {height}px;"
+												style="left: {pos.x1}px; top: {pos.y1}px; width: {pos.width}px; height: {pos.height}px;"
 												role={isNamingMode && result.name === 'Unknown' ? 'button' : undefined}
 												tabindex={isNamingMode && result.name === 'Unknown' ? 0 : -1}
 												on:click={() => result.name === 'Unknown' && result.bbox ? handleFaceClick(index, result.bbox) : null}
@@ -534,7 +818,7 @@
 											<!-- Label -->
 											<div
 												class="absolute px-2 py-1 text-xs font-mono font-bold text-black rounded-md backdrop-blur-sm border transition-all duration-300 {result.name === 'Unknown' ? 'bg-gray-400/90 border-gray-400' : percentage >= 75 ? 'bg-green-400/90 border-green-400 cyber-glow' : percentage >= 50 ? 'bg-yellow-400/90 border-yellow-400' : 'bg-red-400/90 border-red-400'}"
-												style="left: {x1}px; top: {Math.max(0, y1 - 24)}px;"
+												style="left: {pos.x1}px; top: {Math.max(0, pos.y1 - 24)}px;"
 											>
 												<div class="whitespace-nowrap">
 													{result.name.toUpperCase()}
@@ -733,6 +1017,181 @@
 					{/if}
 				</div>
 			{/if}
+
+			<!-- Google Photos Tab -->
+			{#if activeTab === 'google-photos'}
+				<div class="p-8">
+					<h2 class="text-xl font-bold text-green-400 mb-4 font-mono">// GOOGLE PHOTOS LIBRARY</h2>
+					<p class="text-sm text-green-300 mb-4 font-mono opacity-80">
+						> Import photos from Google Photos and analyze faces in your saved library
+					</p>
+					<div class="bg-green-900/20 border border-green-400/30 rounded-lg p-4 mb-8">
+						<p class="text-xs text-green-300 font-mono mb-2">
+							<span class="text-green-400">INFO:</span> Import photos from Google Photos to your local library, then analyze faces.
+							Photos are downloaded and saved locally for faster access and offline analysis.
+						</p>
+						<p class="text-xs text-yellow-300 font-mono">
+							<span class="text-yellow-400">PRIVACY:</span> Only photos you explicitly select will be imported to your local library.
+						</p>
+					</div>
+
+					{#if !googlePhotos?.isAuthenticated()}
+						<!-- Not authenticated -->
+						<div class="text-center">
+							<button
+								on:click={authenticateGooglePhotos}
+								class="cyber-button px-8 py-4 rounded-lg text-lg font-mono text-green-400 border-green-400/50 hover:border-green-400/80 transition-all duration-300"
+							>
+								> CONNECT_GOOGLE_PHOTOS
+							</button>
+						</div>
+					{:else}
+						<!-- Authenticated -->
+						<div class="space-y-6">
+							<!-- Header with controls -->
+							<div class="flex justify-between items-center">
+								<div class="text-green-300 font-mono text-sm">
+									> Connected to Google Photos
+									{#if googlePhotos.hasPickerScope()}
+										<span class="text-green-400 ml-2">✓ Picker API Ready</span>
+									{:else}
+										<span class="text-yellow-400 ml-2">⚠ Missing Picker Scope</span>
+									{/if}
+								</div>
+								<div class="flex gap-2">
+									{#if isPolling}
+										<button
+											on:click={cancelPolling}
+											class="cyber-button px-4 py-2 rounded-md text-xs font-mono text-yellow-400 border-yellow-400/30 hover:border-yellow-400/50"
+										>
+											> CANCEL_SELECTION
+										</button>
+									{/if}
+									<button
+										on:click={forceReauthenticate}
+										class="cyber-button px-4 py-2 rounded-md text-xs font-mono text-yellow-400 border-yellow-400/30 hover:border-yellow-400/50"
+									>
+										> REAUTH
+									</button>
+									<button
+										on:click={disconnectGooglePhotos}
+										class="cyber-button px-4 py-2 rounded-md text-xs font-mono text-red-400 border-red-400/30 hover:border-red-400/50"
+									>
+										> DISCONNECT
+									</button>
+								</div>
+							</div>
+
+							<!-- Photo selection controls -->
+							{#if !isPolling && pickedPhotos.length === 0}
+								<div class="text-center">
+									<button
+										on:click={startPhotoPicking}
+										disabled={googlePhotosLoading}
+										class="cyber-button px-8 py-4 rounded-lg text-lg font-mono text-green-400 border-green-400/50 hover:border-green-400/80 transition-all duration-300 disabled:opacity-50"
+									>
+										{#if googlePhotosLoading}
+											> CREATING_SESSION...
+										{:else}
+											> IMPORT_FROM_GOOGLE_PHOTOS
+										{/if}
+									</button>
+									<p class="text-xs text-green-300/60 font-mono mt-4">
+										Click to open Google Photos and select photos to import to your library
+									</p>
+								</div>
+							{/if}
+
+							<!-- Polling status -->
+							{#if isPolling}
+								<div class="text-center">
+									<div class="inline-flex items-center space-x-2 text-green-400 font-mono">
+										<div class="animate-spin rounded-full h-4 w-4 border-b-2 border-green-400"></div>
+										<span>Waiting for photo selection...</span>
+									</div>
+									<p class="text-xs text-green-300/60 font-mono mt-2">
+										Select photos in the Google Photos window, then click "Done" to import them
+									</p>
+								</div>
+							{/if}
+
+							<!-- Import status message -->
+							{#if pickedPhotos.length > 0}
+								<div class="text-center py-8">
+									<div class="inline-flex items-center space-x-2 text-green-400 font-mono">
+										<div class="animate-spin rounded-full h-6 w-6 border-b-2 border-green-400"></div>
+										<span>Importing {pickedPhotos.length} selected photos...</span>
+									</div>
+									<p class="text-xs text-green-300/60 font-mono mt-2">
+										Photos will appear in the library below once imported
+									</p>
+								</div>
+							{/if}
+
+							<!-- Saved Images Library -->
+							<div class="mt-8">
+								<div class="flex justify-between items-center mb-4">
+									<h3 class="text-lg font-mono text-green-400">
+										> Saved Images Library ({savedImages.length})
+									</h3>
+									<button
+										on:click={() => { savedImagesLoaded = false; loadSavedImages(); }}
+										class="cyber-button px-4 py-2 rounded-md text-xs font-mono text-green-400 border-green-400/30 hover:border-green-400/50"
+									>
+										> REFRESH
+									</button>
+								</div>
+
+								{#if savedImages.length === 0}
+									<div class="text-center py-8">
+										<div class="text-green-400/50 text-4xl mb-4">📷</div>
+										<p class="text-green-300 font-mono text-sm">No images in library yet</p>
+										<p class="text-green-300/60 font-mono text-xs mt-2">Import photos from Google Photos to get started</p>
+									</div>
+								{:else}
+									<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+										{#each savedImages as savedImage}
+											<div class="relative group">
+												<div class="aspect-square bg-gray-800 rounded-lg overflow-hidden border border-green-400/20 hover:border-green-400/50 transition-all duration-300">
+													<img
+														src="/images/{savedImage.filename}"
+														alt={savedImage.original_filename}
+														class="w-full h-full object-cover"
+														loading="lazy"
+													/>
+
+													<!-- Overlay with actions -->
+													<div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+														<button
+															on:click={() => analyzeSavedImage(savedImage)}
+															disabled={googlePhotoProcessing}
+															class="cyber-button px-3 py-1 rounded text-xs font-mono text-green-400 border-green-400/50 hover:border-green-400/80 disabled:opacity-50"
+														>
+															{#if googlePhotoProcessing}
+																> ANALYZING...
+															{:else}
+																> ANALYZE_FACES
+															{/if}
+														</button>
+													</div>
+												</div>
+
+												<!-- Photo info -->
+												<div class="mt-2 text-xs text-green-300/80 font-mono truncate">
+													{savedImage.original_filename}
+												</div>
+												<div class="text-xs text-green-300/60 font-mono">
+													{new Date(savedImage.created_at).toLocaleDateString()}
+												</div>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						</div>
+					{/if}
+				</div>
+			{/if}
 		</div>
 
 		<!-- Footer -->
@@ -749,7 +1208,7 @@
 	<!-- Naming Dialog Modal -->
 	{#if showNameDialog}
 		<div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
-			<div class="cyber-card rounded-lg p-8 max-w-md w-full mx-4 neon-border">
+			<div class="cyber-card rounded-lg p-8 max-w-md w-full mx-4">
 				<h3 class="text-xl font-bold text-purple-400 mb-6 font-mono">// SUBJECT_IDENTIFICATION</h3>
 				<div class="mb-6">
 					<label for="newFaceName" class="block text-sm font-mono text-purple-300 mb-3">
